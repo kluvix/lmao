@@ -1,0 +1,1 @@
+Place the exact user-supplied photo here as jacesus.png. The image embedded in chat was visible but not accessible as a downloadable file. Build copies this PNG to BepInEx/plugins/Pigless/assets/jacesus.png. No substitute image is included.

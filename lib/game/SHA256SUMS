@@ -1,0 +1,5 @@
+442f513916a31718f43eed310f87771a70d9c9635d192d27c895880225286afa  lib/game/Assembly-CSharp.dll
+bd11361183827d9f549ae4f96ba9f84e641f9ead1d846668ecd300db815a0e5b  lib/game/SteamVR.dll
+6f6b7c5ceb11869f569cccba3c5b96c0b65769d39d8ac9e7e1a1930cbc6e3466  lib/game/SteamVR_Actions.dll
+e5accd52e8c1091b0d76b5901c7f0cd89ca451443683a039a39e790388d909cc  lib/game/Unity.InputSystem.dll
+4b4c5d125f59adcb4eb68231db0695e341bf7ca6903dd336fc372afb4994d24a  lib/game/Unity.XR.OpenVR.dll

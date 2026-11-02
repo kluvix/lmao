@@ -1,0 +1,10 @@
+<Project>
+  <ItemGroup Condition="'$(IsModProject)' == 'true'">
+    <Reference Include="$(GameManagedDir)/Assembly-CSharp.dll"><Private>false</Private></Reference>
+    <Reference Include="$(GameManagedDir)/SteamVR.dll"><Private>false</Private></Reference>
+    <Reference Include="$(GameManagedDir)/SteamVR_Actions.dll"><Private>false</Private></Reference>
+    <Reference Include="$(UnityReferenceDir)/UnityEngine*.dll"><Private>false</Private></Reference>
+    <Reference Include="$(ToolReferenceDir)/BepInEx.dll"><Private>false</Private></Reference>
+    <Compile Include="$(MSBuildThisFileDirectory)src/Shared/*.cs" Link="Shared/%(Filename)%(Extension)" />
+  </ItemGroup>
+</Project>

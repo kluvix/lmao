@@ -1,0 +1,6 @@
+**/bin/
+**/obj/
+artifacts/
+lib/game/*.dll
+lib/game/*.zip
+originals/*.dll

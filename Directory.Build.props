@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <GameManagedDir Condition="'$(GameManagedDir)' == ''">$(MSBuildThisFileDirectory)lib/game</GameManagedDir>
+    <ToolReferenceDir Condition="'$(ToolReferenceDir)' == ''">/workspace/tools/references</ToolReferenceDir>
+    <UnityReferenceDir Condition="'$(UnityReferenceDir)' == ''">$(ToolReferenceDir)</UnityReferenceDir>
+  </PropertyGroup>
+</Project>

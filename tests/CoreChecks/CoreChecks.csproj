@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><EnableDefaultCompileItems>false</EnableDefaultCompileItems></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="../../src/Shared/TouchLatch.cs" />
+    <Compile Include="../../src/PiglessCamera/Pigless.CameraMod/PhotoCountdown.cs" />
+    <Compile Include="../../src/PiglessCamera/Pigless.CameraMod/Tablet*.cs" />
+    <Compile Include="../../src/PiglessCamera/Pigless.CameraMod/CameraGrab.cs" />
+    <Compile Include="../../src/PiglessCamera/Pigless.CameraMod/GrabHand.cs" />
+    <Compile Include="../../src/PiglessCamera/Pigless.CameraMod/CameraMath.cs" />
+    <Compile Include="../../src/PiglessCamera/Pigless.CameraMod/FrameRect.cs" />
+    <Compile Include="../../src/PiglessSheesh/Pigless.Sheesh/DoublePressToggle.cs" />
+    <Compile Include="../../src/PiglessSheesh/Pigless.Sheesh/PressEdge.cs" />
+  </ItemGroup>
+</Project>

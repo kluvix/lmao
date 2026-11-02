@@ -1,0 +1,1 @@
+Supplied game references are retained in this directory, excluded from Git, and recorded in SHA256SUMS. A source-only checkout needs Assembly-CSharp.dll, SteamVR.dll, and SteamVR_Actions.dll from the matching game installation. Unity.InputSystem.dll and Unity.XR.OpenVR.dll were supplied and preserved too. Game runtime transitive dependencies remain part of the game installation.
