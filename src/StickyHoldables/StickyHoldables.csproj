@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>12</LangVersion>
+    <Nullable>enable</Nullable>
+    <AssemblyName>StickyHoldables</AssemblyName>
+    <Version>1.0.0</Version>
+    <Description>Keeps equipped local Gorilla Tag holdables attached without holding grip.</Description>
+    <Deterministic>true</Deterministic>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="BepInEx" HintPath="$(ToolReferenceDir)/BepInEx.dll" Private="false" />
+    <Reference Include="0Harmony" HintPath="$(ToolReferenceDir)/0Harmony.dll" Private="false" />
+    <Reference Include="UnityEngine" HintPath="$(UnityReferenceDir)/UnityEngine.dll" Private="false" />
+    <Reference Include="UnityEngine.CoreModule" HintPath="$(UnityReferenceDir)/UnityEngine.CoreModule.dll" Private="false" />
+  </ItemGroup>
+  <Target Name="CheckHoldableReferences" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(ToolReferenceDir)/BepInEx.dll')" Text="Missing BepInEx 5 reference. Set ToolReferenceDir to BepInEx/core." />
+    <Error Condition="!Exists('$(ToolReferenceDir)/0Harmony.dll')" Text="Missing Harmony reference. Set ToolReferenceDir to BepInEx/core." />
+    <Error Condition="!Exists('$(UnityReferenceDir)/UnityEngine.CoreModule.dll')" Text="Missing Unity reference. Set UnityReferenceDir to the game's Managed folder." />
+  </Target>
+</Project>

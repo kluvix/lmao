@@ -1,5 +1,7 @@
 # Pigless mods: recovered source and changes
 
+The separate **Sticky Holdables** plugin keeps equipped local holdables attached without holding grip. Press **F8** to restore normal grip behavior. See [its build, installation, and validation notes](docs/STICKY_HOLDABLES.md); it builds independently with `bash scripts/build-holdables.sh` or `BuildHoldables.ps1`.
+
 Recovered from the supplied Pigless Camera 1.3.0 and Pigless Sheesh 2.2.0 assemblies. The edited versions build as **Camera 1.4.0** and **Sheesh 2.3.0**. This is decompiled source, not the original author's source tree, comments, or project layout.
 
 - `originals/`: untouched original mod DLLs retained locally, with SHA-256 checksums. The DLLs are excluded from GitHub; the checksums are included.
