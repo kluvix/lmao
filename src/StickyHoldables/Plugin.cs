@@ -9,7 +9,7 @@ using UnityEngine;
 
 namespace StickyHoldables;
 
-[BepInPlugin(Id, "Sticky Holdables", "1.0.0")]
+[BepInPlugin(Id, "Sticky Holdables", "1.0.1")]
 public sealed class Plugin : BaseUnityPlugin
 {
     public const string Id = "dev.local.stickyholdables";
@@ -66,6 +66,8 @@ public sealed class Plugin : BaseUnityPlugin
             api = bound;
             foreach (MethodInfo method in bound.ReleaseTargets)
                 hooks.Patch(method, prefix: Patch(nameof(KeepOnRelease)));
+            foreach (MethodInfo method in bound.HoverTargets)
+                hooks.Patch(method, prefix: Patch(nameof(QuietHover)));
             foreach (MethodInfo method in bound.EnableTargets)
                 hooks.Patch(method, postfix: Patch(nameof(ItemEnabled)));
             foreach (MethodInfo method in bound.DisableTargets)
@@ -74,7 +76,7 @@ public sealed class Plugin : BaseUnityPlugin
             hooks.Patch(bound.CosmeticChange, prefix: Patch(nameof(BeforeCosmeticChange)), finalizer: Patch(nameof(AfterCosmeticChange)));
             bound.SetEnabled(sticky.Value);
             rescan = true;
-            Logger.LogInfo("Sticky Holdables 1.0.0 loaded. F8 toggles sticky/normal grip. Only local equipped cosmetics are changed.");
+            Logger.LogInfo("Sticky Holdables 1.0.1 loaded. F8 toggles sticky/normal grip. Carried cosmetic hover vibration is muted.");
         }
         catch (Exception e) { Fail(e); }
     }
@@ -155,6 +157,13 @@ public sealed class Plugin : BaseUnityPlugin
             __result = false;
             return false;
         }
+        catch (Exception e) { plugin?.Fail(e); return true; }
+    }
+
+    private static bool QuietHover(object __instance, object[] __args)
+    {
+        Plugin? plugin = active;
+        try { return plugin?.api?.ShouldMuteHover(__instance, __args[1]) != true; }
         catch (Exception e) { plugin?.Fail(e); return true; }
     }
 

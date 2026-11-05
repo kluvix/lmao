@@ -25,6 +25,7 @@ internal sealed class HoldableApi
     internal MethodInfo HoldingQuery { get; }
     internal MethodInfo CosmeticChange { get; }
     internal IReadOnlyList<MethodInfo> ReleaseTargets { get; }
+    internal IReadOnlyList<MethodInfo> HoverTargets { get; }
     internal IReadOnlyList<MethodInfo> EnableTargets { get; }
     internal IReadOnlyList<MethodInfo> DisableTargets { get; }
     internal Type ItemType => itemType;
@@ -73,6 +74,13 @@ internal sealed class HoldableApi
                    p[4].ParameterType.GetGenericArguments()[0].Name == "CosmeticSlots";
         });
         ReleaseTargets = FindTargets(game, Release, overridesOnly: true);
+        MethodInfo hover = RequireMethod(itemType, "OnHover", m =>
+        {
+            ParameterInfo[] p = m.GetParameters();
+            return m.ReturnType == typeof(void) && p.Length == 2 &&
+                   p[0].ParameterType.Name == "InteractionPoint" && p[1].ParameterType.FullName == "UnityEngine.GameObject";
+        });
+        HoverTargets = FindTargets(game, hover, overridesOnly: true);
         EnableTargets = FindTargets(game, RequireMethod(itemType, "OnEnable", NoArguments), overridesOnly: false);
         DisableTargets = FindTargets(game, RequireMethod(itemType, "OnDisable", NoArguments), overridesOnly: false);
     }
@@ -102,6 +110,18 @@ internal sealed class HoldableApi
     }
 
     internal void Forget(object item) => changes.Remove(item);
+
+    internal bool ShouldMuteHover(object item, object? hoveringHand)
+    {
+        if (!Enabled || Suspended || hoveringHand == null || !IsEligible(item)) return false;
+        object? current = state.GetValue(item);
+        if (!Equals(current, inLeftHand) && !Equals(current, inRightHand)) return false;
+        object? equipment = equipmentInstance.GetValue(null);
+        // Auto-attached cosmetics have a hand pose before the game registers
+        // held equipment. Requiring a held slot here would leave them buzzing.
+        return equipment != null && (ReferenceEquals(leftHand.GetValue(equipment), hoveringHand) ||
+                                     ReferenceEquals(rightHand.GetValue(equipment), hoveringHand));
+    }
 
     internal bool ShouldKeep(object item, object? dropZone, object? releasingHand)
     {

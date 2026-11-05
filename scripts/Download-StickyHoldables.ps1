@@ -1,12 +1,12 @@
 [CmdletBinding()]
 param(
     [uri]$DownloadUrl = 'https://raw.githubusercontent.com/kluvix/lmao/codex/sticky-holdables-download/dist/StickyHoldables.dll',
-    [string]$Destination = (Join-Path (Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Downloads') 'StickyHoldables.dll')
+    [string]$Destination = (Join-Path (Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Downloads') 'StickyHoldables-1.0.1.dll')
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$expectedSha256 = 'b240159041d151d41d6c9e697bce06fde12e2c55ce21014780bb7f41605e660a'
+$expectedSha256 = '4bb6eeff381710a5499b7fb449449ae90cd651ad355ef3403cae6fcfddd10ad9'
 
 if (-not $DownloadUrl.IsAbsoluteUri -or $DownloadUrl.Scheme -ne 'https') {
     throw 'The download URL must use HTTPS.'
@@ -27,7 +27,7 @@ try {
     Invoke-WebRequest -Uri $DownloadUrl.AbsoluteUri -OutFile $temporaryDownload -UseBasicParsing
     $actualSha256 = (Get-FileHash -LiteralPath $temporaryDownload -Algorithm SHA256).Hash
     if ($actualSha256 -ne $expectedSha256) {
-        throw 'Download verification failed. The downloaded file does not match Sticky Holdables 1.0.0.'
+        throw 'Download verification failed. The downloaded file does not match Sticky Holdables 1.0.1.'
     }
     # File.Move refuses an existing target, including one created during download.
     [IO.File]::Move($temporaryDownload, $downloadTarget)

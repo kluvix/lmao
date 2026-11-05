@@ -4,10 +4,12 @@ using UnityEngine;
 using UnityEngine.XR;
 
 public class DropZone { }
+public class InteractionPoint { }
 
 public class HoldableObject
 {
     public virtual bool OnRelease(DropZone? zone, GameObject hand) => true;
+    public virtual void OnHover(InteractionPoint point, GameObject hand) { }
 }
 
 public class TransferrableObject : HoldableObject
@@ -31,6 +33,7 @@ public class TransferrableObject : HoldableObject
     public virtual bool IsMyItem() => Mine;
     internal virtual void OnEnable() { }
     internal virtual void OnDisable() { }
+    public override void OnHover(InteractionPoint point, GameObject hand) { }
 
     public override bool OnRelease(DropZone? zone, GameObject hand)
     {
@@ -69,6 +72,7 @@ public class EqualItem : TransferrableObject
 public class OverrideHoldable : TransferrableObject
 {
     public override bool OnRelease(DropZone? zone, GameObject hand) => base.OnRelease(zone, hand);
+    public override void OnHover(InteractionPoint point, GameObject hand) => base.OnHover(point, hand);
     internal override void OnEnable() { }
     internal override void OnDisable() { }
 }
@@ -78,16 +82,19 @@ public class HiddenLifecycleHoldable : TransferrableObject
     public new void OnEnable() { }
     public new void OnDisable() { }
     public new bool OnRelease(DropZone? zone, GameObject hand) => true;
+    public new void OnHover(InteractionPoint point, GameObject hand) { }
 }
 
 public abstract class AbstractHoldable : TransferrableObject
 {
     public abstract override bool OnRelease(DropZone? zone, GameObject hand);
+    public abstract override void OnHover(InteractionPoint point, GameObject hand);
 }
 
 public class UnrelatedType
 {
     public bool OnRelease(DropZone? zone, GameObject hand) => true;
+    public void OnHover(InteractionPoint point, GameObject hand) { }
     public void OnEnable() { }
 }
 

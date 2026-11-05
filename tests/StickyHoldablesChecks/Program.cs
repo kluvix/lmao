@@ -124,6 +124,83 @@ internal static class Program
             False(api.IgnoreHoldingQuery(equipment, XRNode.LeftHand));
         });
 
+        Run("auto-attached cosmetics mute hover from either local hand without registered equipment", () =>
+        {
+            HoldableApi api = Api(); EquipmentInteractor equipment = EquipmentInteractor.instance!;
+            var leftArm = new TransferrableObject { currentState = State.OnLeftArm };
+            var rightArm = new TransferrableObject { currentState = State.OnRightArm };
+            True(api.Attach(leftArm)); True(api.Attach(rightArm));
+            Equal<object?>(null, equipment.leftHandHeldEquipment);
+            Equal<object?>(null, equipment.rightHandHeldEquipment);
+            foreach (TransferrableObject item in new[] { leftArm, rightArm })
+            {
+                True(api.ShouldMuteHover(item, equipment.leftHand));
+                True(api.ShouldMuteHover(item, equipment.rightHand));
+            }
+            Equal(State.InRightHand, leftArm.currentState);
+            Equal(State.InLeftHand, rightArm.currentState);
+        });
+
+        Run("hover suppression requires an actual local hand and an exact in-hand state", () =>
+        {
+            HoldableApi api = Api(); EquipmentInteractor equipment = EquipmentInteractor.instance!;
+            var item = new TransferrableObject { currentState = State.InLeftHand };
+            False(api.ShouldMuteHover(item, null));
+            False(api.ShouldMuteHover(item, new GameObject()));
+            False(api.ShouldMuteHover(null!, equipment.leftHand));
+            foreach (State state in new[] { State.OnLeftArm, State.OnRightArm, State.OnChest, State.None,
+                         (State)((int)State.InLeftHand | (int)State.InRightHand) })
+            {
+                item.currentState = state;
+                False(api.ShouldMuteHover(item, equipment.leftHand));
+                False(api.ShouldMuteHover(item, equipment.rightHand));
+            }
+            item.currentState = State.InRightHand;
+            EquipmentInteractor.instance = null;
+            False(api.ShouldMuteHover(item, equipment.leftHand));
+        });
+
+        Run("hover feedback stays vanilla for remote, excluded, disabled and cosmetic-change cases", () =>
+        {
+            HoldableApi api = Api(); EquipmentInteractor equipment = EquipmentInteractor.instance!;
+            TransferrableObject[] excluded =
+            {
+                new() { Local = false, Mine = true },
+                new() { Local = true, Mine = false },
+                new() { isSceneObject = true },
+                new Slingshot(), new ThrowableBug(), new ThrowableSetDressing(), new DecorativeItem(),
+                new DerivedSlingshot(), new DerivedThrowableBug(),
+                new DerivedThrowableSetDressing(), new DerivedDecorativeItem()
+            };
+            foreach (TransferrableObject item in excluded)
+            {
+                item.currentState = State.InRightHand;
+                False(api.ShouldMuteHover(item, equipment.leftHand));
+                False(api.ShouldMuteHover(item, equipment.rightHand));
+            }
+            var owned = new TransferrableObject { currentState = State.InLeftHand };
+            True(api.ShouldMuteHover(owned, equipment.leftHand));
+            bool entered = api.BeginCosmeticChange(CosmeticsController.instance!);
+            True(entered); False(api.ShouldMuteHover(owned, equipment.leftHand));
+            api.EndCosmeticChange(entered);
+            True(api.ShouldMuteHover(owned, equipment.leftHand));
+            api.SetEnabled(false);
+            False(api.ShouldMuteHover(owned, equipment.leftHand));
+            api.SetEnabled(true);
+            True(api.ShouldMuteHover(owned, equipment.leftHand));
+        });
+
+        Run("hover method discovery includes genuine overrides without unrelated or hidden methods", () =>
+        {
+            HoldableApi api = Api();
+            True(api.HoverTargets.Any(m => m.DeclaringType == typeof(TransferrableObject)));
+            True(api.HoverTargets.Any(m => m.DeclaringType == typeof(OverrideHoldable)));
+            False(api.HoverTargets.Any(m => m.DeclaringType == typeof(HiddenLifecycleHoldable)));
+            False(api.HoverTargets.Any(m => m.DeclaringType == typeof(AbstractHoldable)));
+            False(api.HoverTargets.Any(m => m.DeclaringType == typeof(UnrelatedType)));
+            Equal(api.HoverTargets.Count, api.HoverTargets.Distinct().Count());
+        });
+
         Run("disable restores only attached snapshots and never overwrites a new game state", () =>
         {
             HoldableApi api = Api();

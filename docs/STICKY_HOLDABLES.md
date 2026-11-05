@@ -2,6 +2,8 @@
 
 A BepInEx 5 plugin that keeps eligible equipped Gorilla Tag holdables in your hands without holding the grip buttons.
 
+Version 1.0.1 mutes repeated hover vibration from carried holdables while you move. Replace the previous StickyHoldables DLL; keep only one copy installed.
+
 ## Install
 
 Finish malware cleanup first. Install into a fresh, trusted BepInEx installation; do not restore the previously infected plugin DLLs or compiler dependencies.
@@ -14,12 +16,13 @@ The release package places the DLL at `BepInEx/plugins/StickyHoldables/StickyHol
 
 ## Download with PowerShell
 
-The repository includes `scripts/Download-StickyHoldables.ps1`. After reviewing it, run it with PowerShell. It downloads the published DLL over HTTPS into your Downloads folder, verifies the exact SHA-256 for version 1.0.0, and refuses to replace an existing file. It never executes the downloaded DLL or installs it into the game. Use `-Destination 'C:\path\StickyHoldables.dll'` for a different location. No administrator access or antivirus exclusions are needed.
+The repository includes `scripts/Download-StickyHoldables.ps1`. After reviewing it, run it with PowerShell. It downloads the published DLL over HTTPS into your Downloads folder as `StickyHoldables-1.0.1.dll`, verifies the exact SHA-256 for version 1.0.1, and refuses to replace an existing file. It never executes the downloaded DLL or installs it into the game. Use `-Destination 'C:\path\StickyHoldables.dll'` for a different location. No administrator access or antivirus exclusions are needed.
 
 ## Behavior and controls
 
 - Eligible local cosmetics equipped on the arms automatically attach to the opposite hands, following the game's arm-to-hand dock mapping.
 - Releasing grip away from a docking target keeps a registered local cosmetic held. Releasing over a docking target still follows the game's normal docking behavior.
+- Carried local holdables do not send hover feedback to either local hand. Normal grab, ground-contact, tag, and unrelated item vibration calls are untouched. Docked, remote, and excluded items retain their hover behavior.
 - Press **F8** on the PC keyboard to toggle the behavior. Disabling reverts items held by the mod to their previous docks.
 - Normal cosmetic changes remain supported. The mod checks both local ownership and the matching hand/equipment registration before suppressing a grip release. It does not unlock cosmetics or take ownership of other players' items.
 - Slingshots, throwable bugs, throwable set dressing, decorative items, and scene objects are excluded.
@@ -28,11 +31,13 @@ F8 uses BepInEx's keyboard input support. The toggle key and initial enabled sta
 
 ## Validation limits
 
-The Release build completed with zero warnings and errors. The synthetic API-contract suite passed 21 cases with 143 assertions, including ownership/hand identity, intentional docking, excluded objects, disabled startup, cosmetic-change failures, and state restoration. The resulting DLL has no embedded resources or native imports; static inspection found no network/process API references or the previously identified infection payload. This is not an antivirus certification.
+The Release build completed with zero warnings and errors. The synthetic API-contract suite passed 25 cases with 201 assertions, including ownership/hand identity, intentional docking, excluded objects, disabled startup, cosmetic-change failures, state restoration, and hover-vibration guards for both hands. The resulting DLL has no embedded resources or native imports; static inspection found no network/process API references or the previously identified infection payload. This is not an antivirus certification.
 
 The project uses reflection to bind the game's holdable APIs. Its design was checked against public game API source, not the exact game build installed on your PC. If required APIs are missing, it disables the hooks and records an error in the BepInEx log. No Gorilla Tag or VR runtime is available in this development environment. Compilation and automated checks validate the code and simulated API behavior; they do not prove compatibility, hand alignment, docking, or synchronization in the actual game.
 
 For an in-game check, equip one supported cosmetic on each arm, confirm hand attachment without grip, intentionally dock and re-grab it, change cosmetics, and toggle F8 off and on. Check that remote players' items and excluded throwables remain unaffected. Stop using the plugin if these checks fail.
+
+For version 1.0.1, walk and swing both hands with equipped holdables: there should be no repeated carried-item hover pulse. Check that ordinary world contact and tag feedback still work. Hover callbacks on carried items are skipped, so custom hover effects on individual cosmetic subclasses require an in-game check too.
 
 ## Build on Windows
 

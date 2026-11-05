@@ -1,6 +1,6 @@
 # Built mod DLLs
 
-`StickyHoldables.dll` is the standalone Sticky Holdables 1.0.0 plugin. Its Release build passed with zero warnings/errors, and 21 synthetic API-contract cases (143 assertions) passed. It is not game-tested. See [Sticky Holdables instructions](../docs/STICKY_HOLDABLES.md). Finish malware cleanup before installing any plugin.
+`StickyHoldables.dll` is the standalone Sticky Holdables 1.0.1 plugin. It mutes repeated hover vibration from carried local holdables. Its Release build passed with zero warnings/errors, and 25 synthetic API-contract cases (201 assertions) passed. It is not game-tested. See [Sticky Holdables instructions](../docs/STICKY_HOLDABLES.md). Replace the older StickyHoldables copy rather than installing both versions.
 
 To download Sticky Holdables with PowerShell, the source includes [Download-StickyHoldables.ps1](../scripts/Download-StickyHoldables.ps1). It saves the DLL to Downloads, checks its SHA-256 before keeping it, and never runs the DLL, replaces an existing file, or changes the game installation.
 
