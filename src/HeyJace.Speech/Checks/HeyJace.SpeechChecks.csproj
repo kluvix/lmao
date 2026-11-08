@@ -16,5 +16,7 @@
     <Compile Include="../RecognitionVocabulary.cs" Link="RecognitionVocabulary.cs" />
     <Compile Include="../RecognitionGrammars.cs" Link="RecognitionGrammars.cs" />
     <Compile Include="../RecognitionCandidates.cs" Link="RecognitionCandidates.cs" />
+    <Compile Include="../RecognitionSemantics.cs" Link="RecognitionSemantics.cs" />
+    <Compile Include="../CosmeticSpeechAliases.cs" Link="CosmeticSpeechAliases.cs" />
   </ItemGroup>
 </Project>

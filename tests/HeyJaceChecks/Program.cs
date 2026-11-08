@@ -229,7 +229,7 @@ foreach (string invalid in new[]
     "join code jace thirty four and join code XX", "join code jace 34 equip Hat", "join code room with words",
     "equip outfit zero", "equip outfit -1", "equip outfit 1000", "equip outfit first twenty", "equip outfit 2 and join code ROOM",
     "change my color to red", "change my color to #a0B1c2", "change my color to ten zero five", "change my color to red and equip Hat", "change the time to tomorrow",
-    "change the time to -1", "change the time to 256", "equip ../Hat", "equip Hat; join code ROOM", "unequip " + new string('A', 65),
+    "change the time to -1", "change the time to 256", "unequip " + new string('A', 65),
     "change the time to 0am", "change the time to 13pm", "change the time to six am tomorrow", "change the time to 6:30 pm",
     "change the time to twenty am", "change the time to one two pm", "change the time to 12:00:00am", "change the time to tonight"
 })
@@ -287,6 +287,8 @@ foreach (var message in new[]
     new WireMessage(WireKind.Status, text: "Listening"),
     new WireMessage(WireKind.Quit),
     new WireMessage(WireKind.Command, 8, command: new JaceCommand(CommandKind.EquipOutfit, "2")),
+    new WireMessage(WireKind.Command, 9, command: new JaceCommand(CommandKind.SetName, "JACE34")),
+    new WireMessage(WireKind.Command, 10, command: new JaceCommand(CommandKind.SetMic, "PUSH TO TALK")),
     new WireMessage(WireKind.Vocabulary, 1, text: "Top Hat|Jace’s Shirt")
 })
 {
@@ -329,5 +331,121 @@ for (int i = 0; i < 500; i++)
     for (int j = 0; j < characters.Length; j++) characters[j] = (char)random.Next(0, 256);
     Check(!PipeProtocol.TryDecode(new string(characters), out _), "random malformed wire input " + i);
 }
+
+
+// Reported outfit/equip confusion and explicit opposite actions stay separate.
+foreach (string verb in new[] { "equip", "equipe", "quipe", "quip", "equipped", "wear", "put on" })
+{
+    ExpectCommand("hey jace " + verb + " outfit3", CommandKind.EquipOutfit, "3");
+    ExpectCommand("hey jace " + verb + " out fit number three", CommandKind.EquipOutfit, "3");
+    ExpectCommand("hey jace " + verb + " Cowboy Hat", CommandKind.Equip, "Cowboy Hat");
+}
+foreach (string verb in new[] { "unequip", "unequipe", "unquipe", "unquip", "un equip", "un equipe", "take off", "remove" })
+    ExpectCommand("hey jace " + verb + " Cowboy Hat", CommandKind.Unequip, "Cowboy Hat");
+foreach (string answer in new[] { "outfit3", "outfit three", "quipe outfit 3", "equip out fit number three" })
+{
+    var outfitSession = new VoiceSession();
+    outfitSession.Process("hey jace equip", 1, 0);
+    Check(Command(outfitSession.Process(answer, 1, 1))?.Command is { Kind: CommandKind.EquipOutfit, Argument: "3" }, "pending generic equip routes reserved numeric outfit: " + answer);
+}
+foreach (string name in new[] { "Outfit Hat", "Wear Hat", "Please Wear Hat", "Equip Hat", "Unquip Cap" })
+{
+    var cosmeticSession = new VoiceSession();
+    cosmeticSession.Process("hey jace equip", 1, 0);
+    Check(Command(cosmeticSession.Process(name, 1, 1))?.Command is { Kind: CommandKind.Equip } literal && literal.Argument == name, "pending actual cosmetic name is preserved: " + name);
+}
+foreach (var intent in new[]
+{
+    ("hey jace equipe outfitthree", (CommandKind?)CommandKind.Equip),
+    ("hey jace quip outfit3", (CommandKind?)CommandKind.EquipOutfit),
+    ("hey jace equip outfit nonsense", (CommandKind?)CommandKind.EquipOutfit),
+    ("hey jace unequipe outfit3", (CommandKind?)CommandKind.Unequip),
+    ("please take off", (CommandKind?)CommandKind.Unequip),
+    ("hey jace can you put on", (CommandKind?)CommandKind.Equip),
+    ("hey jace set name to !!!", (CommandKind?)CommandKind.SetName),
+    ("set mic to something", (CommandKind?)CommandKind.SetMic),
+    ("do not equip Hat", (CommandKind?)null)
+})
+{
+    bool found = VoiceSession.TryIdentifyIntent(intent.Item1, out CommandKind action);
+    Check(found == intent.Item2.HasValue && (!found || action == intent.Item2), "pure explicit intent before argument validation: " + intent.Item1);
+}
+Check(!VoiceSession.TryIdentifyIntent("hey jace equip Hat\n", out _), "intent inspection rejects control-bearing transcripts");
+ExpectCommand("hey jace set name to Jace34", CommandKind.SetName, "JACE34");
+ExpectCommand("hey jace set my name to jace games", CommandKind.SetName, "JACEGAMES");
+ExpectCommand("hey jace set name to jace three four", CommandKind.SetName, "JACE34");
+ExpectCommand("hey jace set name to alpha", CommandKind.SetName, "ALPHA");
+ExpectCommand("hey jace set name to ABC123456789", CommandKind.SetName, "ABC123456789");
+foreach (var mic in new[] { ("open mic", "OPEN MIC"), ("open mike", "OPEN MIC"), ("open microphone", "OPEN MIC"), ("push to talk", "PUSH TO TALK"), ("push to mute", "PUSH TO MUTE"), ("push-to-talk", "PUSH TO TALK"), ("push too mute", "PUSH TO MUTE") })
+    ExpectCommand("hey jace set mic to " + mic.Item1, CommandKind.SetMic, mic.Item2);
+foreach (var request in new[] { ("set name to", "Jace34", CommandKind.SetName, "JACE34"), ("set mic to", "push to mute", CommandKind.SetMic, "PUSH TO MUTE"), ("set mic to", "set mic to push to talk", CommandKind.SetMic, "PUSH TO TALK") })
+{
+    var followup = new VoiceSession();
+    followup.Process("hey jace " + request.Item1, 1, 0);
+    Check(followup.PendingKind == request.Item3, "new command requests typed follow-up: " + request.Item1);
+    Check(Command(followup.Process(request.Item2, .5f, 1))?.Command is { } result && result.Kind == request.Item3 && result.Argument == request.Item4, "new command follow-up uses normal trusted window: " + request.Item1);
+}
+foreach (string name in new[] { "ABCDEFGHIJKLM", "JACE_34", "JACE-34", "JA!CE", "JACÉ", "1234567890123" })
+    Check(Command(new VoiceSession().Process("hey jace set name to " + name, 1, 0)) == null, "invalid game name rejected: " + name);
+foreach (string mode in new[] { "off", "open", "talk", "push to talk and mute", "anything" })
+    Check(Command(new VoiceSession().Process("hey jace set mic to " + mode, 1, 0)) == null, "unsupported mic mode rejected: " + mode);
+var nameRetry = new VoiceSession();
+nameRetry.Process("hey jace set name to too-long-name", 1, 0);
+Check(nameRetry.PendingKind == CommandKind.SetName && nameRetry.IsAwaitingCommand(1), "invalid name keeps typed correction window");
+Check(Command(nameRetry.Process("Jace34", 1, 1))?.Command is { Kind: CommandKind.SetName, Argument: "JACE34" }, "valid name retry corrects the same request");
+var micCancel = new VoiceSession();
+micCancel.Process("hey jace set mic to", 1, 0); micCancel.Process("cancel", 1, 1);
+Check(micCancel.Process("open mic", 1, 2).Count == 0 && micCancel.PendingKind == null, "cancel removes pending mic request");
+Check((int)CommandKind.SetName == 6 && (int)CommandKind.SetMic == 7 && (int)CommandKind.EquipOutfit == 5, "name and mic append stable protocol command kinds");
+foreach (string ambient in new[] { "set name to Jace34", "set mic to open mic", "quipe outfit3", "unquipe Cowboy Hat" })
+    Check(new VoiceSession().Process(ambient, 1, 0).Count == 0, "new aliases never execute ambient speech: " + ambient);
+
+
+ExpectCommand("hey jace equip Red/Blue Scarf!", CommandKind.Equip, "Red/Blue Scarf");
+ExpectCommand("hey jace equip ../Hat", CommandKind.Equip, "../Hat");
+ExpectCommand("hey jace equip Hat; join code ROOM", CommandKind.Equip, "Hat; join code ROOM");
+var canonicalOutfitName = new VoiceSession().Process("hey jace equip cosmetic OUTFIT TWO", 1, 0, new JaceCommand(CommandKind.Equip, "OUTFIT TWO"));
+Check(Command(canonicalOutfitName)?.Command is { Kind: CommandKind.Equip, Argument: "OUTFIT TWO" }, "trusted owned-name semantics preserve a real cosmetic containing outfit words");
+var inertName = new VoiceSession().Process("hey jace put on Red/Blue Hat!", 1, 0, new JaceCommand(CommandKind.Equip, "Red/Blue Hat!"));
+Check(Command(inertName)?.Command is { Kind: CommandKind.Equip, Argument: "Red/Blue Hat!" }, "owned canonical punctuation survives cosmetic semantics");
+var noSemanticWake = new VoiceSession().Process("Cowboy Hat", 1, 0, new JaceCommand(CommandKind.Equip, "Cowboy Hat"));
+Check(noSemanticWake.Count == 0, "owned-name semantics never authorize idle ambient speech");
+var semanticConfidence = new VoiceSession().Process("hey jace equip Hat", .1f, 0, new JaceCommand(CommandKind.Equip, "Hat"));
+Check(semanticConfidence.Count == 0, "owned-name semantics cannot bypass wake confidence");
+var oppositeSemantic = new VoiceSession();
+Check(Command(oppositeSemantic.Process("hey jace take off Hat", 1, 0, new JaceCommand(CommandKind.Equip, "Hat"))) == null && oppositeSemantic.IsAwaitingCommand(1), "owned-name semantic cannot invert explicit take off into equip");
+var pendingOppositeSemantic = new VoiceSession();
+pendingOppositeSemantic.Process("hey jace unequip", 1, 0);
+Check(Command(pendingOppositeSemantic.Process("Hat", 1, 1, new JaceCommand(CommandKind.Equip, "Hat"))) == null && pendingOppositeSemantic.PendingKind == CommandKind.Unequip, "owned-name semantics preserve a pending opposite action");
+Check(Command(new VoiceSession().Process("hey jace equip Hat", 1, 0, new JaceCommand(CommandKind.Equip, "Bad\nHat"))) == null, "canonical owned-name semantics reject control characters independently of raw speech");
+var semanticPreview = new VoiceSession();
+semanticPreview.Process("hey jace equip", 1, 0);
+Check(Command(semanticPreview.Preview("equip cosmetic OUTFIT TWO", 1, 1, new JaceCommand(CommandKind.Equip, "OUTFIT TWO")))?.Command is { Kind: CommandKind.Equip, Argument: "OUTFIT TWO" } && semanticPreview.PendingKind == CommandKind.Equip && semanticPreview.IsAwaitingCommand(1), "semantic preview preserves live pending intent");
+
+
+foreach (string utterance in new[] { "hey jace quipe outfit3", "hey jace equip outfit three", "hey jace quip outfit 3" })
+    Check(Command(new VoiceSession().Process(utterance, 1, 0, new JaceCommand(CommandKind.Equip, "outfit3")))?.Command is { Kind: CommandKind.EquipOutfit, Argument: "3" }, "reported explicit outfit request wins over a mistaken cosmetic semantic: " + utterance);
+var reservedPending = new VoiceSession();
+reservedPending.Process("hey jace equip", 1, 0);
+Check(Command(reservedPending.Process("outfit3", 1, 1, new JaceCommand(CommandKind.Equip, "outfit3")))?.Command is { Kind: CommandKind.EquipOutfit, Argument: "3" }, "reserved pending outfit3 cannot be diverted into cosmetic semantics");
+ExpectCommand("hey jace equip cosmetic Outfit Two", CommandKind.Equip, "Outfit Two");
+ExpectCommand("hey jace unequip cosmetic Outfit Two", CommandKind.Unequip, "Outfit Two");
+
+
+foreach (var collision in new[] { ("unequip", "Wear Hat", CommandKind.Unequip), ("equip", "Remove Hat", CommandKind.Equip) })
+{
+    var pendingName = new VoiceSession();
+    pendingName.Process("hey jace " + collision.Item1, 1, 0);
+    Check(Command(pendingName.Process(collision.Item2, 1, 1, new JaceCommand(collision.Item3, collision.Item2)))?.Command is { } resolved &&
+        resolved.Kind == collision.Item3 && resolved.Argument == collision.Item2, "pending canonical owned name retains action despite verb-like name: " + collision.Item2);
+}
+var freshOppositeName = new VoiceSession();
+freshOppositeName.Process("hey jace unequip", 1, 0);
+Check(Command(freshOppositeName.Process("hey jace equip Wear Hat", 1, 1, new JaceCommand(CommandKind.Unequip, "Wear Hat"))) == null,
+    "fresh wake with explicit equip still rejects contradictory unequip semantics");
+var nonCanonicalOpposite = new VoiceSession();
+nonCanonicalOpposite.Process("hey jace unequip", 1, 0);
+Check(Command(nonCanonicalOpposite.Process("equip Hat", 1, 1, new JaceCommand(CommandKind.Unequip, "Hat"))) == null,
+    "pending semantic action cannot ignore an explicit opposite verb when it is not the exact canonical name");
 
 Console.WriteLine($"Hey Jace checks passed: {checks}");

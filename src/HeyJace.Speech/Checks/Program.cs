@@ -18,6 +18,7 @@ internal static class Entry
         OutfitGrammarAlignment();
         CompletionRace();
         Candidates();
+        CosmeticRecognition();
         await DeferredResponse();
         Console.WriteLine("PASS: " + _checks + " managed speech-host checks. No microphone, recognizer, synthesizer, or game was started.");
     }
@@ -51,6 +52,60 @@ internal static class Entry
             var spelling = new VoiceSession();
             Check(spelling.Process("hey jace join code " + symbol, 1, 0).Any(value => value.Kind == VoiceEventKind.Command), "room grammar symbol parser alignment " + symbol);
         }
+    }
+
+    private static void CosmeticRecognition()
+    {
+        var aliases = CosmeticSpeechAliases.Build(new[] { "TOP HAT", "T-SHIRT", "MONKEY'S HAT", "HAT24", "A-B", "A B" });
+        Check(aliases["top hat"] == "TOP HAT", "uppercase wardrobe label has a pronounceable alias preserving its canonical name");
+        Check(aliases["t shirt"] == "T-SHIRT" && aliases["monkeys hat"] == "MONKEY'S HAT", "punctuated wardrobe labels have safe pronunciation aliases");
+        Check(aliases["hat two four"] == "HAT24", "digit words map back to the actual inventory label");
+        Check(!aliases.ContainsKey("a b"), "ambiguous pronunciation never selects the first cosmetic");
+        Check(CosmeticSpeechAliases.Build(Enumerable.Range(0, 4096).Select(i => "Hat " + i)).Values.Distinct().Count() == 4096,
+            "whole wardrobe is supported beyond the old 512-name limit");
+        JaceCommand semantic = RecognitionSemantics.Create("Unequip", "MONKEY'S HAT")!;
+        Check(semantic.Kind == CommandKind.Unequip && semantic.Argument == "MONKEY'S HAT", "semantic action and canonical name remain separate");
+        Check(RecognitionSemantics.Create("EquipOutfit", "3") == null && RecognitionSemantics.Create("Equip", "Bad\nName") == null,
+            "cosmetic semantics cannot inject another action or malformed argument");
+        var session = new VoiceSession(); session.Process("hey jace", 1, 0);
+        var best = new RecognitionCandidate("unequip", .85f);
+        var wrongAction = new RecognitionCandidate("equip Top Hat", .83f);
+        Check(RecognitionCandidates.Select(session, new[] { best, wrongAction }, 1) == best,
+            "a usable equip alternative cannot change a clearly requested unequip");
+        best = new RecognitionCandidate("equip", .85f);
+        wrongAction = new RecognitionCandidate("unequip Top Hat", .83f);
+        Check(RecognitionCandidates.Select(session, new[] { best, wrongAction }, 1) == best,
+            "a missing equip argument cannot be rescued by taking a cosmetic off");
+        best = new RecognitionCandidate("equip Top Hat", .85f, new JaceCommand(CommandKind.Unequip, "TOP HAT"));
+        Check(RecognitionCandidates.Select(session, new[] { best, wrongAction }, 1) == best,
+            "contradictory semantic action cannot rescue a raw equip request as unequip");
+        best = new RecognitionCandidate("equip outfit nonsense", .85f);
+        wrongAction = new RecognitionCandidate("equip Top Hat", .83f);
+        Check(RecognitionCandidates.Select(session, new[] { best, wrongAction }, 1) == best,
+            "a failed outfit number cannot become a cosmetic equip alternative");
+        var equip = new RecognitionCandidate("equip Top Hat", .85f, new JaceCommand(CommandKind.Equip, "TOP HAT"));
+        var unequip = new RecognitionCandidate("unequip Top Hat", .83f, new JaceCommand(CommandKind.Unequip, "TOP HAT"));
+        RecognitionCandidate unclear = RecognitionCandidates.Select(session, new[] { equip, unequip }, 1);
+        Check(unclear.AmbiguousAction, "nearly tied opposite cosmetic actions ask for clear words instead of doing the opposite");
+        IReadOnlyList<VoiceEvent> held = RecognitionCandidates.Process(session, unclear, 1);
+        Check(!held.Any(value => value.Kind == VoiceEventKind.Command) && session.IsAwaitingCommand(1),
+            "ambiguous equip or unequip neither mutates the game nor consumes the trusted wake");
+        var clear = equip with { Text = "put on Top Hat" };
+        Check(RecognitionCandidates.Select(session, new[] { clear, unequip }, 2) == clear, "clear put-on wording is kept");
+        var reserved = new RecognitionCandidate("quipe outfit3", .9f, new JaceCommand(CommandKind.Equip, "OUTFIT3"));
+        JaceCommand? outfit = RecognitionCandidates.Process(session, reserved, 3).SingleOrDefault(value => value.Kind == VoiceEventKind.Command)?.Command;
+        Check(outfit?.Kind == CommandKind.EquipOutfit && outfit.Argument == "3", "reserved outfit phrase outranks misleading cosmetic semantics");
+        foreach (string mode in RecognitionGrammars.MicModes())
+        {
+            var mic = new VoiceSession();
+            JaceCommand? command = mic.Process("hey jace set mic to " + mode, 1, 0).SingleOrDefault(value => value.Kind == VoiceEventKind.Command)?.Command;
+            Check(command?.Kind == CommandKind.SetMic && command.Argument == mode.ToUpperInvariant(), "microphone grammar/parser mode alignment " + mode);
+        }
+        var name = new VoiceSession();
+        Check(name.Process("hey jace set name to jace34", 1, 0).Any(value => value.Command?.Kind == CommandKind.SetName), "new name grammar prefix aligns with parser");
+        var compound = CosmeticSpeechAliases.Build(new[] { "PINKUMBRELLA", "TIGEREARS", "BLUEHEADPHONES" });
+        Check(compound["pink umbrella"] == "PINKUMBRELLA" && compound["tiger ears"] == "TIGEREARS" && compound["blue headphones"] == "BLUEHEADPHONES",
+            "compound catalog labels retain canonical identity through spaced pronunciation aliases");
     }
 
     private static async Task DeferredResponse()
@@ -100,7 +155,7 @@ internal static class Entry
         vocabulary.Accept(Frame(0));
         for (int i = 0; i < RecognitionVocabulary.MaximumNames + 100; i++) vocabulary.Accept(Frame(1, "Cosmetic " + i));
         Check(vocabulary.Accept(Frame(2)), "new bounded catalog publishes");
-        Check(vocabulary.Names.Length == RecognitionVocabulary.MaximumNames, "catalog bounded at 512 unique names");
+        Check(vocabulary.Names.Length == RecognitionVocabulary.MaximumNames, "whole-wardrobe catalog remains bounded");
         Check(!vocabulary.Accept(new WireMessage(WireKind.Command, 0, text: "not a reset", command: new JaceCommand(CommandKind.Equip, "Top Hat"))), "commands cannot reset vocabulary");
         Check(!vocabulary.Accept(new WireMessage(WireKind.Vocabulary, 0, command: new JaceCommand(CommandKind.Equip, "Top Hat"))), "malformed vocabulary cannot reset");
         vocabulary.Accept(Frame(0));

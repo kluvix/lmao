@@ -6,7 +6,7 @@ namespace HeyJace.Speech;
 // replaces the previous vocabulary; partial transactions never erase it.
 internal sealed class RecognitionVocabulary
 {
-    internal const int MaximumNames = 512;
+    internal const int MaximumNames = 4096;
     private HashSet<string>? _receiving;
     internal string[] Names { get; private set; } = Array.Empty<string>();
 

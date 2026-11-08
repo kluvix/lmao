@@ -1,6 +1,6 @@
 # Pigless mods: recovered source and changes
 
-**Hey Jace 1.2.0** is the separate offline Windows voice-assistant mod, with in-game chat notifications, numeric Gorilla Tag RGB codes, actual owned cosmetic names, and numbered saved outfits. See [its commands, installation, and validation notes](docs/HEY_JACE.md). Build it with `bash scripts/build-jace.sh` or `BuildJace.ps1`; install the complete plugin folder, including its speech helper.
+**Hey Jace 1.3.0** is the separate offline Windows voice-assistant mod, with in-game chat notifications, numeric Gorilla Tag RGB codes, actual owned cosmetic names, and numbered saved outfits. See [its commands, installation, and validation notes](docs/HEY_JACE.md). Build it with `bash scripts/build-jace.sh` or `BuildJace.ps1`; install the complete plugin folder, including its speech helper.
 
 **Pigless Bunny** adds a local low-poly bunny companion with grip pickup, hand hopping, and shoulder perching. See [its controls, build, and validation notes](docs/PIGLESS_BUNNY.md); build it independently with `bash scripts/build-bunny.sh` or `BuildBunny.ps1`.
 

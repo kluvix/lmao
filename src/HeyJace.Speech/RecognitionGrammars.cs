@@ -9,7 +9,7 @@ internal sealed class RecognitionGrammars
     private readonly SpeechRecognitionEngine _recognizer;
     private readonly CultureInfo _culture;
     private readonly List<Grammar> _activeCommands = new();
-    private readonly List<Grammar> _colorAnswers = new(), _outfitAnswers = new(), _cosmeticAnswers = new(), _timeAnswers = new(), _roomAnswers = new();
+    private readonly List<Grammar> _colorAnswers = new(), _outfitAnswers = new(), _equipAnswers = new(), _unequipAnswers = new(), _timeAnswers = new(), _roomAnswers = new(), _micAnswers = new();
     private readonly List<Grammar> _cosmeticGrammars = new();
 
     internal RecognitionGrammars(SpeechRecognitionEngine recognizer, CultureInfo culture)
@@ -21,7 +21,8 @@ internal sealed class RecognitionGrammars
         string[] prefixes =
         {
             "join room", "join the room", "join code", "join room code", "set color", "set my color to", "change color", "change my color to", "change my colour to",
-            "set time", "set the time to", "change the time to", "equip outfit", "equip outfit number", "equip", "put on", "wear", "unequip", "take off", "remove", "cancel"
+            "set time", "set the time to", "change the time to", "equip outfit", "equip outfit number", "quip outfit", "quipe outfit", "equip", "quip", "quipe", "put on", "wear", "unequip", "unequipe", "unquip", "take off", "remove",
+            "set name to", "set my name to", "change my name to", "set mic to", "set my mic to", "set microphone to", "cancel"
         };
         LoadPhrase(prefixes.Select(text => "hey jace " + text), "Wake commands", priority: 0);
         LoadPhrase(prefixes, "Active commands", _activeCommands, priority: 0);
@@ -33,20 +34,34 @@ internal sealed class RecognitionGrammars
         AddStructured("Wake numeric color", () => ColorCommand(colors, true), priority: 8);
         AddStructured("Active numeric color", () => ColorCommand(colors, false), _activeCommands, priority: 8);
         AddStructured("Three color digits", Digits, _colorAnswers, priority: 9);
-        string[] outfits = { "equip outfit number", "equip outfit", "wear outfit", "put on outfit" };
-        AddStructured("Wake outfit", () => OutfitCommand(outfits, true), priority: 8);
-        AddStructured("Active outfit", () => OutfitCommand(outfits, false), _activeCommands, priority: 8);
+        string[] outfits = { "equip outfit number", "equip outfit", "quip outfit", "quipe outfit", "equip out fit", "wear outfit", "put on outfit" };
+        AddStructured("Wake outfit", () => OutfitCommand(outfits, true), priority: 12);
+        AddStructured("Active outfit", () => OutfitCommand(outfits, false), _activeCommands, priority: 12);
         AddStructured("Outfit number", OutfitNumber, _outfitAnswers, priority: 9);
+        string[] namePrefixes = { "set name to", "set my name to", "change my name to", "change name to" };
+        AddStructured("Wake player name", () => DictatedCommand(namePrefixes, true), priority: 8);
+        AddStructured("Active player name", () => DictatedCommand(namePrefixes, false), _activeCommands, priority: 8);
+        string[] micPrefixes = { "set mic to", "set my mic to", "set microphone to", "set my microphone to", "change mic to" };
+        AddStructured("Wake microphone mode", () => NamedCommand(micPrefixes, MicModes(), true), priority: 10);
+        AddStructured("Active microphone mode", () => NamedCommand(micPrefixes, MicModes(), false), _activeCommands, priority: 10);
+        LoadPhrase(MicModes(), "Microphone mode answer", _micAnswers, priority: 10);
 
         string[] times = { "dawn", "morning", "sunrise", "day", "noon", "midday", "afternoon", "sunset", "evening", "night", "midnight", "auto", "normal", "default", "reset" };
         LoadPhrase(times, "Time answer", _timeAnswers);
         var timePrefixes = new[] { "change the time to", "set the time to", "change time to", "set time to" };
-        AddStructured("Wake time", () => NamedCommand(timePrefixes, times, true));
-        AddStructured("Active time", () => NamedCommand(timePrefixes, times, false), _activeCommands);
+        AddStructured("Wake time", () => NamedCommand(timePrefixes, times, true), priority: 8);
+        AddStructured("Active time", () => NamedCommand(timePrefixes, times, false), _activeCommands, priority: 8);
         // Dictation tails keep arbitrary codes/new names in the command grammar
         // instead of forcing the entire wake phrase through free dictation.
-        AddStructured("Wake arguments", () => DictatedCommand(prefixes.Where(value => value != "cancel").ToArray(), true));
-        AddStructured("Active arguments", () => DictatedCommand(prefixes.Where(value => value != "cancel").ToArray(), false), _activeCommands);
+        // Outfit and opposite cosmetic actions have their own grammar rather
+        // than sharing one broad equip/unequip dictation branch.
+        string[] generic = prefixes.Where(value => value != "cancel" && !IsCosmeticPrefix(value) && !value.Contains("outfit", StringComparison.Ordinal)).ToArray();
+        AddStructured("Wake arguments", () => DictatedCommand(generic, true));
+        AddStructured("Active arguments", () => DictatedCommand(generic, false), _activeCommands);
+        AddStructured("Wake equip dictation", () => DictatedCommand(EquipPrefixes(), true), priority: 1);
+        AddStructured("Active equip dictation", () => DictatedCommand(EquipPrefixes(), false), _activeCommands, priority: 1);
+        AddStructured("Wake unequip dictation", () => DictatedCommand(UnequipPrefixes(), true), priority: 1);
+        AddStructured("Active unequip dictation", () => DictatedCommand(UnequipPrefixes(), false), _activeCommands, priority: 1);
         _recognizer.LoadGrammar(new DictationGrammar { Name = "Fallback dictation", Weight = .7f });
         SetState(false, null);
     }
@@ -56,16 +71,21 @@ internal sealed class RecognitionGrammars
         // Caller has stopped recognition before modifying loaded grammars.
         foreach (Grammar grammar in _cosmeticGrammars)
         {
-            _activeCommands.Remove(grammar); _cosmeticAnswers.Remove(grammar);
+            _activeCommands.Remove(grammar); _equipAnswers.Remove(grammar); _unequipAnswers.Remove(grammar);
             _recognizer.UnloadGrammar(grammar);
         }
         _cosmeticGrammars.Clear();
         if (names.Length == 0) return;
-        string[] prefixes = { "equip", "put on", "wear", "unequip", "take off", "remove" };
-        Grammar? wake = AddStructured("Owned cosmetic wake names", () => NamedCommand(prefixes, names, true));
-        Grammar? active = AddStructured("Owned cosmetic command names", () => NamedCommand(prefixes, names, false), _activeCommands);
-        Grammar? answer = LoadPhrase(names, "Owned cosmetic answer names", _cosmeticAnswers);
-        foreach (Grammar? grammar in new[] { wake, active, answer }) if (grammar != null) _cosmeticGrammars.Add(grammar);
+        IReadOnlyDictionary<string, string> aliases = CosmeticSpeechAliases.Build(names);
+        if (aliases.Count == 0) return;
+        foreach (CommandKind intent in new[] { CommandKind.Equip, CommandKind.Unequip })
+        {
+            string[] prefixes = intent == CommandKind.Equip ? EquipPrefixes() : UnequipPrefixes();
+            Grammar? wake = AddStructured("Owned " + intent + " wake names", () => CosmeticCommand(prefixes, aliases, intent, true), priority: 8);
+            Grammar? active = AddStructured("Owned " + intent + " command names", () => CosmeticCommand(prefixes, aliases, intent, false), _activeCommands, priority: 8);
+            Grammar? answer = AddStructured("Owned " + intent + " answer names", () => CosmeticAnswer(aliases, intent), intent == CommandKind.Equip ? _equipAnswers : _unequipAnswers, priority: 10);
+            foreach (Grammar? grammar in new[] { wake, active, answer }) if (grammar != null) _cosmeticGrammars.Add(grammar);
+        }
     }
 
     internal void SetState(bool active, CommandKind? pending)
@@ -73,15 +93,49 @@ internal sealed class RecognitionGrammars
         SetEnabled(_activeCommands, active);
         SetEnabled(_colorAnswers, active && pending == CommandKind.SetColor);
         SetEnabled(_outfitAnswers, active && pending == CommandKind.EquipOutfit);
-        SetEnabled(_cosmeticAnswers, active && pending is CommandKind.Equip or CommandKind.Unequip);
+        SetEnabled(_equipAnswers, active && pending == CommandKind.Equip);
+        SetEnabled(_unequipAnswers, active && pending == CommandKind.Unequip);
         SetEnabled(_timeAnswers, active && pending == CommandKind.SetTime);
         SetEnabled(_roomAnswers, active && pending == CommandKind.JoinRoom);
+        SetEnabled(_micAnswers, active && pending == CommandKind.SetMic);
     }
 
     private static void SetEnabled(IEnumerable<Grammar> grammars, bool enabled)
     { foreach (Grammar grammar in grammars) if (grammar.Enabled != enabled) grammar.Enabled = enabled; }
 
     private GrammarBuilder Builder() => new() { Culture = _culture };
+
+    internal static string[] EquipPrefixes() => new[] { "equip cosmetic", "put on cosmetic", "equip", "quip", "quipe", "put on", "wear" };
+    internal static string[] UnequipPrefixes() => new[] { "unequip cosmetic", "take off cosmetic", "unequip", "unequipe", "unquip", "unquipe", "take off", "remove" };
+    internal static string[] MicModes() => new[] { "open mic", "push to mute", "push to talk" };
+    private static bool IsCosmeticPrefix(string prefix) => EquipPrefixes().Contains(prefix) || UnequipPrefixes().Contains(prefix);
+
+    private GrammarBuilder CosmeticNames(IReadOnlyDictionary<string, string> aliases)
+    {
+        var choices = new Choices();
+        foreach (KeyValuePair<string, string> alias in aliases)
+            choices.Add(new GrammarBuilder(new SemanticResultValue(alias.Key, alias.Value)));
+        return new GrammarBuilder(choices) { Culture = _culture };
+    }
+
+    private GrammarBuilder CosmeticCommand(string[] prefixes, IReadOnlyDictionary<string, string> aliases, CommandKind intent, bool wake)
+    {
+        var builder = Builder();
+        if (wake) builder.Append("hey jace");
+        var prefix = Builder(); prefix.Append(new Choices(prefixes));
+        builder.Append(new SemanticResultKey("jaceIntent", new GrammarBuilder(new SemanticResultValue(prefix, intent.ToString())) { Culture = _culture }));
+        builder.Append(new SemanticResultKey("jaceArgument", CosmeticNames(aliases)));
+        return builder;
+    }
+
+    private GrammarBuilder CosmeticAnswer(IReadOnlyDictionary<string, string> aliases, CommandKind intent)
+    {
+        var argument = Builder();
+        argument.Append(new SemanticResultKey("jaceArgument", CosmeticNames(aliases)));
+        var builder = Builder();
+        builder.Append(new SemanticResultKey("jaceIntent", new GrammarBuilder(new SemanticResultValue(argument, intent.ToString())) { Culture = _culture }));
+        return builder;
+    }
     private GrammarBuilder Digits()
     {
         var builder = Builder();

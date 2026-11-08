@@ -148,7 +148,7 @@ internal sealed class SpeechHost : IDisposable
                         RecognitionCandidate selected = RecognitionCandidates.Select(_session, heard.Candidates, eventTime);
                         string original = heard.Text;
                         heard = heard with { Text = selected.Text, Confidence = selected.Confidence };
-                        IReadOnlyList<VoiceEvent> voiceEvents = _session.Process(heard.Text, heard.Confidence, eventTime);
+                        IReadOnlyList<VoiceEvent> voiceEvents = RecognitionCandidates.Process(_session, selected, eventTime);
                         if (voiceEvents.Count > 0) _responseVersion++;
                         bool woke = voiceEvents.Any(item => item.Kind == VoiceEventKind.Wake);
                         // Never send transcripts of unrelated ambient speech to
@@ -302,12 +302,12 @@ internal sealed class SpeechHost : IDisposable
         if (_disposed || _paused || _stop.IsCancellationRequested) return;
         long timestamp = _clock.ElapsedTicks;
         if (timestamp < Interlocked.Read(ref _acceptAfter)) return;
-        var candidates = new List<RecognitionCandidate> { new(args.Result.Text, args.Result.Confidence) };
+        var candidates = new List<RecognitionCandidate> { new(args.Result.Text, args.Result.Confidence, RecognitionSemantics.Read(args.Result)) };
         try
         {
             foreach (RecognizedPhrase alternate in args.Result.Alternates.Take(5))
                 if (!candidates.Any(value => string.Equals(value.Text, alternate.Text, StringComparison.OrdinalIgnoreCase)))
-                    candidates.Add(new RecognitionCandidate(alternate.Text, alternate.Confidence));
+                    candidates.Add(new RecognitionCandidate(alternate.Text, alternate.Confidence, RecognitionSemantics.Read(alternate)));
         }
         catch (Exception error) when (error is InvalidOperationException or System.Runtime.InteropServices.COMException) { }
         _events.Writer.TryWrite(new Heard(args.Result.Text, args.Result.Confidence, timestamp, args.Result.Grammar?.Name ?? "unknown", candidates.Take(5).ToArray()));
@@ -393,6 +393,8 @@ internal sealed class SpeechHost : IDisposable
             CommandKind.Equip or CommandKind.Unequip => "Listening for the cosmetic name.",
             CommandKind.JoinRoom => "Listening for the room code.",
             CommandKind.SetTime => "Listening for the time.",
+            CommandKind.SetName => "Listening for the player name.",
+            CommandKind.SetMic => "Listening for open mic, push to mute, or push to talk.",
             _ => "Listening for your command."
         };
         return StatusAsync(text);

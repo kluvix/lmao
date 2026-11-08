@@ -48,6 +48,8 @@ internal sealed class GameActions : IDisposable
                 CommandKind.Equip => ChangeCosmetic(command.Argument, true),
                 CommandKind.Unequip => ChangeCosmetic(command.Argument, false),
                 CommandKind.EquipOutfit => EquipOutfit(command.Argument),
+                CommandKind.SetName => SetName(command.Argument),
+                CommandKind.SetMic => SetMic(command.Argument),
                 _ => Failure("That command is not supported.")
             };
         }
@@ -70,7 +72,7 @@ internal sealed class GameActions : IDisposable
             object? current = Field(time.Manager.GetType(), "instance", Static).GetValue(null);
             if (!Alive(time.Manager) || !ReferenceEquals(current, time.Manager)) RestoreTime();
             else if (!string.Equals(time.Setting.GetValue(time.Manager)?.ToString(), "Static", StringComparison.Ordinal) ||
-                     (int)time.Index.GetValue(time.Manager)! != time.SelectedIndex)
+                     (int)time.LastSent.GetValue(time.Manager)! != time.SelectedIndex)
                 time = null;
         }
         catch
@@ -117,6 +119,82 @@ internal sealed class GameActions : IDisposable
         return Success("Color set to " + color.Label + ".");
     }
 
+    private ActionResult SetName(string argument)
+    {
+        string requested = (argument ?? "").Trim().ToUpperInvariant();
+        if (requested.Length < 1 || requested.Length > 12)
+            return Failure("Use a name of one to twelve letters or digits.");
+        foreach (char character in requested)
+            if (!(character >= 'A' && character <= 'Z') && !(character >= '0' && character <= '9'))
+                return Failure("Names can contain only letters and digits.");
+        Type type = GameType("GorillaNetworking.GorillaComputer");
+        object computer = Singleton(type, "instance");
+        if (!(bool)Property(type, "NametagsEnabled", Instance).GetValue(computer)!)
+            return Failure("Custom names are disabled in your game settings.");
+        PropertyInfo state = Property(type, "currentState", Instance);
+        string previousState = state.GetValue(computer)?.ToString() ?? "";
+        if (previousState == "Loading" || previousState == "Startup" || previousState == "NameWarning")
+            return Failure("Wait for the game computer to finish its current name check.");
+        FieldInfo current = Field(type, "currentName", Instance);
+        FieldInfo saved = Field(type, "savedName", Instance);
+        string savedBefore = saved.GetValue(computer)?.ToString() ?? "";
+        if (string.Equals(savedBefore, requested, StringComparison.OrdinalIgnoreCase))
+            return Success("Your name is already " + requested + ".");
+        MethodInfo process = type.GetMethod("ProcessNameState", Instance) ?? throw new MissingMethodException(type.FullName, "ProcessNameState");
+        ParameterInfo[] parameters = process.GetParameters();
+        if (parameters.Length != 1 || !parameters[0].ParameterType.IsEnum)
+            return Failure("This game's name controls are not supported.");
+        object enter = Enum.Parse(parameters[0].ParameterType, "enter", false);
+        object? original = current.GetValue(computer);
+        current.SetValue(computer, requested);
+        try
+        {
+            // Enter preserves the normal KID permission, enabled-nametag and
+            // server moderation path. Its callback applies prefs and the RPC.
+            process.Invoke(computer, new[] { enter });
+        }
+        catch
+        {
+            if (state.GetValue(computer)?.ToString() == previousState && saved.GetValue(computer)?.ToString() == savedBefore)
+                current.SetValue(computer, original);
+            throw;
+        }
+        if (string.Equals(saved.GetValue(computer)?.ToString(), requested, StringComparison.OrdinalIgnoreCase))
+            return Success("Name set to " + requested + ".");
+        if (state.GetValue(computer)?.ToString() == "Loading")
+            return Success("Requested name " + requested + ". Waiting for the game's name check.");
+        // A permission rejection must not leave the editable name changed.
+        if (state.GetValue(computer)?.ToString() == previousState && saved.GetValue(computer)?.ToString() == savedBefore)
+            current.SetValue(computer, original);
+        return Failure("The game did not allow that name change.");
+    }
+
+    private ActionResult SetMic(string argument)
+    {
+        string requested = (argument ?? "").Trim().ToUpperInvariant();
+        string option;
+        switch (requested)
+        {
+            case "OPEN MIC": option = "option1"; break;
+            case "PUSH TO TALK": option = "option2"; break;
+            case "PUSH TO MUTE": option = "option3"; break;
+            default: return Failure("Say open mic, push to mute, or push to talk.");
+        }
+        Type type = GameType("GorillaNetworking.GorillaComputer");
+        object computer = Singleton(type, "instance");
+        MethodInfo process = type.GetMethod("ProcessMicState", Instance) ?? throw new MissingMethodException(type.FullName, "ProcessMicState");
+        ParameterInfo[] parameters = process.GetParameters();
+        if (parameters.Length != 1 || !parameters[0].ParameterType.IsEnum)
+            return Failure("This game's microphone controls are not supported.");
+        FieldInfo mode = Field(type, "pttType", Instance);
+        // This changes only the game's PTT setting and normal saved preference.
+        // It does not enable voice-chat permissions or change Jace's capture.
+        process.Invoke(computer, new[] { Enum.Parse(parameters[0].ParameterType, option, false) });
+        return mode.GetValue(computer)?.ToString() == requested
+            ? Success("Game mic set to " + requested.ToLowerInvariant() + ".")
+            : Failure("The game could not change its microphone mode.");
+    }
+
     private ActionResult ChangeCosmetic(string argument, bool equip)
     {
         CosmeticApi api = new CosmeticApi(GameType("GorillaNetworking.CosmeticsController"));
@@ -125,7 +203,7 @@ internal sealed class GameActions : IDisposable
         List<object> owned = api.OwnedItems();
         if (owned.Count == 0) return Failure("Your owned wardrobe inventory has not loaded yet.");
         List<object> matches = MatchCosmetics(api, owned, requested);
-        if (matches.Count == 0) return Failure("No owned cosmetic matches \"" + argument + "\". Say its full actual name.");
+        if (matches.Count == 0) return Failure("No owned cosmetic matches \"" + argument + "\". Say its wardrobe name, or a distinctive part of it.");
         if (matches.Count > 1)
         {
             List<string> names = new List<string>();
@@ -198,6 +276,12 @@ internal sealed class GameActions : IDisposable
             bool match = label == name || catalogName == name;
             if (match && ids.Add(api.Id(item))) matches.Add(item);
         }
+        if (matches.Count > 0 || name.Length < 4) return matches;
+        // A distinctive partial name is useful when dictation misses a leading
+        // adjective. Only a unique owned match can reach the wardrobe action;
+        // several matches are listed for the user instead of guessed.
+        foreach (object item in owned)
+            if (Normalize(api.Label(item)).Contains(name) && ids.Add(api.Id(item))) matches.Add(item);
         return matches;
     }
 
@@ -216,13 +300,16 @@ internal sealed class GameActions : IDisposable
                 bool clean = name.Length > 0 && name.Length <= 64;
                 foreach (char character in name)
                     if (char.IsControl(character) || character == '|' || character == '\u2028' || character == '\u2029') clean = false;
+                // The speech helper derives pronunciations and maps them to
+                // this canonical name. Exporting aliases as extra items would
+                // make equivalent spellings look like ambiguous cosmetics.
                 if (clean) names.Add(name);
             }
             var result = new string[names.Count];
             names.CopyTo(result);
             Array.Sort(result, StringComparer.OrdinalIgnoreCase);
-            if (result.Length <= 512) return result;
-            var bounded = new string[512];
+            if (result.Length <= 4096) return result;
+            var bounded = new string[4096];
             Array.Copy(result, bounded, bounded.Length);
             return bounded;
         }
@@ -279,10 +366,20 @@ internal sealed class GameActions : IDisposable
         }
         Type managerType = GameType("BetterDayNightManager");
         object current = Singleton(managerType, "instance");
-        if (!(bool)Field(managerType, "computerInit", Instance).GetValue(current)!)
-            return Failure("The local day and night clock is still initializing.");
         if (Field(managerType, "animatingLightFlash", Instance).GetValue(current) != null)
             return Failure("Wait for the current lighting animation to finish.");
+        if (!(bool)Field(managerType, "computerInit", Instance).GetValue(current)!)
+        {
+            // Offline maps can run the normal UTC bootstrap indefinitely with
+            // computerInit false. Let the game's own clock initialize first;
+            // setting Static before that bootstrap would be overwritten.
+            Method(managerType, "UpdateTimeOfDay", Instance, typeof(bool)).Invoke(current, new object[] { true });
+            if (!(bool)Field(managerType, "computerInit", Instance).GetValue(current)! &&
+                (double)Field(managerType, "baseSeconds", Instance).GetValue(current)! == 0)
+                return Failure("The local day and night clock is still initializing.");
+        }
+        if (managerType.GetField("timeIndexOverrideFunc", Instance)?.GetValue(current) != null)
+            return Failure("The current map controls its own lighting, so its time cannot be changed here.");
         string[] labels = (string[])Field(managerType, "dayNightLightmapNames", Instance).GetValue(current)!;
         double[] ranges = (double[])Property(managerType, "timeOfDayRange", Instance).GetValue(current)!;
         if (labels == null || ranges == null || labels.Length == 0 || labels.Length != ranges.Length)
@@ -298,7 +395,7 @@ internal sealed class GameActions : IDisposable
         {
             snapshot.Set.Invoke(current, new object[] { index, true });
             if (snapshot.Setting.GetValue(current)?.ToString() != "Static" ||
-                (int)snapshot.Index.GetValue(current)! != index)
+                (int)snapshot.LastSent.GetValue(current)! != index)
             {
                 RestoreTime();
                 return Failure("The current map could not apply that local time.");
@@ -309,7 +406,9 @@ internal sealed class GameActions : IDisposable
             RestoreTime();
             throw;
         }
-        return Success("Local time set to " + labels[index] + ".");
+        return Success((int)snapshot.Index.GetValue(current)! == index
+            ? "Local time set to " + labels[index] + "."
+            : "Requested local time " + labels[index] + ". Waiting for the lighting update.");
     }
 
     private static int ResolveTime(string requested, string[] labels, double[] ranges)
@@ -333,18 +432,35 @@ internal sealed class GameActions : IDisposable
                 hour = hour % 12 + (pm ? 12 : 0);
                 break;
         }
-        double total = 0;
-        foreach (double range in ranges)
+        int closest = -1;
+        double smallestDistance = 25;
+        for (int i = 0; i < labels.Length; i++)
         {
-            if (double.IsNaN(range) || double.IsInfinity(range) || range <= 0) return -1;
-            total += range;
+            if (!TryPresetHour(Normalize(labels[i] ?? ""), out double presetHour)) continue;
+            // Preset labels are actual clock phases; serialized summer/winter
+            // durations need not sum to 24 and index zero need not be midnight.
+            double distance = (hour - presetHour + 24) % 24;
+            if (distance < smallestDistance) { smallestDistance = distance; closest = i; }
         }
-        // Hour aliases are meaningful only when the game's configured ranges
-        // describe a 24-hour day. Labels remain available on other schedules.
-        if (Math.Abs(total - 24) > .01) return -1;
-        double end = 0;
-        for (int i = 0; i < ranges.Length; i++) { end += ranges[i]; if (hour < end) return i; }
-        return -1;
+        return closest;
+    }
+
+    private static bool TryPresetHour(string label, out double hour)
+    {
+        switch (label)
+        {
+            case "night": case "midnight": hour = 0; return true;
+            case "dawn": case "sunrise": case "morning": hour = 6; return true;
+            case "day": case "noon": case "midday": hour = 12; return true;
+            case "afternoon": hour = 15; return true;
+            case "sunset": case "evening": hour = 18; return true;
+        }
+        bool am = label.EndsWith("am", StringComparison.Ordinal), pm = label.EndsWith("pm", StringComparison.Ordinal);
+        if ((am || pm) && double.TryParse(label.Substring(0, label.Length - 2), NumberStyles.None,
+                CultureInfo.InvariantCulture, out hour) && hour >= 1 && hour <= 12)
+        { hour = hour % 12 + (pm ? 12 : 0); return true; }
+        hour = 0;
+        return false;
     }
 
     private void EnsureTimeGuard(Type managerType)
@@ -478,6 +594,8 @@ internal sealed class GameActions : IDisposable
         CommandKind.Equip => "equip that cosmetic",
         CommandKind.Unequip => "remove that cosmetic",
         CommandKind.EquipOutfit => "load that outfit",
+        CommandKind.SetName => "change your name",
+        CommandKind.SetMic => "change the game microphone mode",
         _ => "run that command"
     };
     private static ActionResult Success(string message) => new ActionResult(true, message);

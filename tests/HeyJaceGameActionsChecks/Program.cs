@@ -31,7 +31,9 @@ internal static class Program
         Check(result.Success && wardrobe.Presses == 1 && !wardrobe.LastTemporary, "Actual cosmetic name takes the ordinary owned wardrobe path.");
         Check(wardrobe.currentWornSet.items[0].itemName == hat.itemName, "Selected named item becomes worn.");
         Check(Run(actions, CommandKind.Equip, "Fancy Top Hat").Success && wardrobe.Presses == 1, "Repeated equip is idempotent, never toggles the item off.");
-        Check(!Run(actions, CommandKind.Equip, "Top Hat").Success && wardrobe.Presses == 1, "Partial name does not silently equip a different item.");
+        Check(Run(actions, CommandKind.Equip, "Top Hat").Success && wardrobe.Presses == 1, "A unique distinctive partial name resolves the owned item without toggling it.");
+        wardrobe.unlockedCosmetics.Add(Item("LBAAX", "Snowy Top Hat"));
+        Check(!Run(actions, CommandKind.Equip, "Top Hat").Success && wardrobe.Presses == 1, "Ambiguous partial names never choose an arbitrary item.");
         Check(!Run(actions, CommandKind.Equip, "Unowned Fancy Crown").Success, "Locked/catalog-only item cannot be equipped.");
         Check(Run(actions, CommandKind.Unequip, "FANCY TOP HAT").Success && wardrobe.Removes == 1 && wardrobe.Syncs == 1, "Unequip removes and synchronizes normally.");
         Check(Run(actions, CommandKind.Unequip, "Fancy Top Hat").Success && wardrobe.Removes == 1, "Repeated unequip is idempotent.");
@@ -51,13 +53,17 @@ internal static class Program
         Check(!Run(actions, CommandKind.Equip, "summer set").Success && wardrobe.Presses == presses, "A set with an unowned child is refused before mutation.");
         var names = actions.GetOwnedCosmeticNames();
         Check(names.Contains("Fancy Top Hat") && !names.Contains("LBAAB"), "Recognition vocabulary contains actual names rather than item IDs.");
+        wardrobe.unlockedCosmetics.Add(Item("CAMEL", "RainbowTopHat"));
+        wardrobe.unlockedCosmetics.Add(Item("UPPER", "COWBOYHAT"));
+        names = actions.GetOwnedCosmeticNames();
+        Check(names.Contains("RainbowTopHat") && names.Contains("COWBOYHAT") && !names.Contains("Rainbow Top Hat") && !names.Contains("COWBOY HAT"), "Recognition vocabulary exports only canonical item names; speech owns pronunciation aliases.");
         wardrobe.unlockedCosmetics.Add(Item("BAD", "Bad|Injected"));
         wardrobe.unlockedCosmetics.Add(Item("BAD2", "Bad\nName"));
         wardrobe.unlockedCosmetics.Add(Item("BAD3", new string('x', 65)));
         wardrobe.unlockedCosmetics.Add(Item("BAD4", "Bad\u2028Name"));
         Check(!actions.GetOwnedCosmeticNames().Any(x => x.Contains('|') || x.Contains('\n') || x.Contains('\u2028') || x.Length > 64), "Recognition vocabulary filters oversized/control/delimiter names.");
-        for (int i = 0; i < 600; i++) wardrobe.unlockedCosmetics.Add(Item("EXTRA" + i, "Extra Hat " + i));
-        Check(actions.GetOwnedCosmeticNames().Count == 512, "Recognition vocabulary stays bounded.");
+        for (int i = 0; i < 4200; i++) wardrobe.unlockedCosmetics.Add(Item("EXTRA" + i, "Extra Hat " + i));
+        Check(actions.GetOwnedCosmeticNames().Count == 4096, "Recognition vocabulary covers large wardrobes while staying bounded.");
 
         Check(Run(actions, CommandKind.EquipOutfit, "2").Success && wardrobe.LoadedIndex == 1 && CosmeticsController.SelectedOutfit == 1, "Voice outfit two selects the normal zero-based saved outfit one.");
         int loads = wardrobe.Loads;
@@ -80,12 +86,51 @@ internal static class Program
         Check(!Run(actions, CommandKind.SetColor, "905").Success, "Unavailable network/player state gives failure rather than false success.");
         NetworkSystem.Instance = new NetworkSystem();
 
+        var computer = GorillaComputer.instance;
+        result = Run(actions, CommandKind.SetName, "JACE34");
+        Check(result.Success && result.Message.StartsWith("Requested name") && computer.currentState == GorillaComputer.ComputerState.Loading && computer.NameRequests == 1, "Name goes through the normal moderated Enter path without claiming premature completion.");
+        Check(computer.savedName == "GORILLA", "Unapproved name has not been saved by the adapter.");
+        Check(!Run(actions, CommandKind.SetName, "OTHER").Success && computer.currentName == "JACE34" && computer.NameRequests == 1, "Pending moderation cannot be replaced by another name command.");
+        computer.FinishNameCheck(true);
+        Check(Run(actions, CommandKind.SetName, "jace34").Success && computer.NameRequests == 1, "Already saved name does not submit another moderation request.");
+        Check(!Run(actions, CommandKind.SetName, "LONGERTHANTWELVE").Success && !Run(actions, CommandKind.SetName, "BAD/NAME").Success, "Invalid names never reach the game.");
+        computer.NametagsEnabled = false;
+        Check(!Run(actions, CommandKind.SetName, "OTHER").Success && computer.currentName == "JACE34", "Disabled custom names are respected.");
+        computer.NametagsEnabled = true; computer.NamePermission = false;
+        Check(!Run(actions, CommandKind.SetName, "OTHER").Success && computer.currentName == "JACE34" && computer.NameRequests == 1, "Normal name permission rejection restores the prior editable name.");
+        computer.NamePermission = true;
+        computer.RejectNameImmediately = true;
+        Check(!Run(actions, CommandKind.SetName, "OTHER").Success && computer.currentName == "GORILLA" && computer.savedName == "GORILLA", "A synchronous moderation rejection keeps the game's replacement name instead of restoring a rejected edit.");
+        computer.RejectNameImmediately = false;
+        foreach (string mode in new[] { "OPEN MIC", "PUSH TO TALK", "PUSH TO MUTE" })
+            Check(Run(actions, CommandKind.SetMic, mode).Success && computer.pttType == mode && computer.SavedMic == mode, "Mic mode uses normal saved game preference: " + mode);
+        Check(computer.voiceChatOn == "FALSE" && computer.MicChanges == 3, "Changing PTT preference never enables voice chat or changes its permission setting.");
+        Check(!Run(actions, CommandKind.SetMic, "MUTE EVERYONE").Success && computer.MicChanges == 3, "Unsupported mic mode is rejected before mutation.");
+
         Check(Run(actions, CommandKind.SetTime, "night").Success && BetterDayNightManager.instance.currentTimeIndex == 0, "Time command resolves the map's normal preset and calls local API.");
         Check(Run(actions, CommandKind.SetTime, "normal").Success && BetterDayNightManager.instance.currentSetting == BetterDayNightManager.Mode.Normal, "Normal time restores the prior clock mode.");
         Check(!Run(actions, CommandKind.SetTime, "75").Success, "Out-of-range map time is rejected.");
         Check(Run(actions, CommandKind.SetTime, "morning").Success, "Morning alias resolves using map duration data.");
         Run(actions, CommandKind.JoinRoom, "NEXT");
         Check(BetterDayNightManager.instance.currentSetting == BetterDayNightManager.Mode.Normal, "Room join clears the prior local time override.");
+        var clock = BetterDayNightManager.instance;
+        clock.dayNightLightmapNames = new[] { "6am", "12pm", "6pm", "12am" };
+        clock.Ranges = new[] { 1d, 2d, 3d, 4d };
+        Check(Run(actions, CommandKind.SetTime, "night").Success && clock.currentTimeIndex == 3, "Night resolves the actual clock label even when ranges do not sum to 24 and index zero is morning.");
+        Check(Run(actions, CommandKind.SetTime, "day").Success && clock.currentTimeIndex == 1, "Day resolves the noon label rather than assuming a midnight-origin schedule.");
+        Run(actions, CommandKind.SetTime, "normal");
+        clock.computerInit = false; clock.baseSeconds = 0;
+        Check(Run(actions, CommandKind.SetTime, "night").Success && clock.baseSeconds != 0 && !clock.computerInit, "Offline clock uses its normal UTC bootstrap without forcing the computerInit flag.");
+        Run(actions, CommandKind.SetTime, "normal");
+        clock.DelayLighting = true;
+        Check(Run(actions, CommandKind.SetTime, "day").Success && clock.lastSentTimeIndex == 1 && clock.currentTimeIndex != 1, "A queued render update is accepted based on the normal requested index.");
+        actions.Tick();
+        clock.DelayLighting = false; clock.UpdateTimeOfDay(true);
+        Run(actions, CommandKind.JoinRoom, "AFTER");
+        Check(clock.currentSetting == BetterDayNightManager.Mode.Normal, "Tick retains ownership during deferred lighting so joining still restores the original time.");
+        clock.OverrideLighting = true;
+        Check(!Run(actions, CommandKind.SetTime, "night").Success, "A map-owned lighting override is respected.");
+        clock.OverrideLighting = false;
         actions.Dispose();
         Check(!Run(actions, CommandKind.JoinRoom, "NO").Success, "Disposed actions cannot mutate the game.");
         Console.WriteLine($"Hey Jace game boundary checks: {checks} assertions passed (fake APIs; no game execution).");
@@ -142,12 +187,18 @@ public sealed class BetterDayNightManager
     public bool computerInit = true;
     public object? animatingLightFlash = null;
     public string[] dayNightLightmapNames = { "night", "morning", "day", "evening" };
-    public double[] timeOfDayRange => new[] { 6d, 6d, 6d, 6d };
+    public double[] Ranges = { 6d, 6d, 6d, 6d };
+    public double[] timeOfDayRange => Ranges;
     public enum Mode { Normal, Static }
     public Mode currentSetting = Mode.Normal;
     public int currentTimeIndex = 2, lastSentTimeIndex = 2;
-    public void SetTimeOfDay(int index, bool local) { if (!local) throw new Exception("Must remain local."); currentTimeIndex = index; currentSetting = Mode.Static; }
-    public void ClearTimeOfDay(bool local) { if (!local) throw new Exception("Must remain local."); currentSetting = Mode.Normal; }
+    public double baseSeconds = 1;
+    public bool DelayLighting;
+    private Func<int, int>? timeIndexOverrideFunc;
+    public bool OverrideLighting { set => timeIndexOverrideFunc = value ? index => index : null; }
+    public void SetTimeOfDay(int index, bool forceUpdate) { lastSentTimeIndex = index; currentSetting = Mode.Static; if (forceUpdate) UpdateTimeOfDay(true); }
+    public void UpdateTimeOfDay(bool forceUpdate) { if (!computerInit && baseSeconds == 0) baseSeconds = 1; if (!DelayLighting) currentTimeIndex = currentSetting == Mode.Normal ? 2 : timeIndexOverrideFunc?.Invoke(lastSentTimeIndex) ?? lastSentTimeIndex; }
+    public void ClearTimeOfDay(bool forceUpdate) { currentSetting = Mode.Normal; lastSentTimeIndex = -1; if (forceUpdate) UpdateTimeOfDay(true); }
     public void OnPlayerJoined(NetPlayer player) { }
 }
 namespace GorillaNetworking
@@ -161,7 +212,22 @@ namespace GorillaNetworking
         public int Joins;
         public void AttemptToJoinSpecificRoom(string code, JoinType type) { LastCode = code; LastJoinType = type; Joins++; }
     }
-    public sealed class GorillaComputer { public static GorillaComputer instance = new(); }
+    public enum GorillaKeyboardBindings { enter, option1, option2, option3 }
+    public sealed class GorillaComputer
+    {
+        public enum ComputerState { Startup, Name, Loading, NameWarning }
+        public static GorillaComputer instance = new();
+        public bool NametagsEnabled { get; set; } = true;
+        public bool NamePermission = true;
+        public bool RejectNameImmediately;
+        public string currentName = "GORILLA", savedName = "GORILLA", pttType = "OPEN MIC", voiceChatOn = "FALSE", SavedMic = "";
+        public int NameRequests, MicChanges;
+        private ComputerState state = ComputerState.Name;
+        public ComputerState currentState => state;
+        public void ProcessNameState(GorillaKeyboardBindings button) { if (!NamePermission || !NametagsEnabled || button != GorillaKeyboardBindings.enter || currentName == savedName) return; state = ComputerState.Loading; NameRequests++; if (RejectNameImmediately) FinishNameCheck(false); }
+        public void FinishNameCheck(bool approve) { if (!approve) currentName = "GORILLA"; savedName = currentName; state = ComputerState.Name; }
+        private void ProcessMicState(GorillaKeyboardBindings button) { pttType = button switch { GorillaKeyboardBindings.option1 => "OPEN MIC", GorillaKeyboardBindings.option2 => "PUSH TO TALK", GorillaKeyboardBindings.option3 => "PUSH TO MUTE", _ => pttType }; SavedMic = pttType; MicChanges++; }
+    }
     public sealed class CosmeticsController
     {
         public enum CosmeticCategory { None, Hat, Face, Set, Collectable, Count }

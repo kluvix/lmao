@@ -1,6 +1,6 @@
 namespace HeyJace.Core;
 
-public enum CommandKind { JoinRoom, SetColor, SetTime, Equip, Unequip, EquipOutfit }
+public enum CommandKind { JoinRoom, SetColor, SetTime, Equip, Unequip, EquipOutfit, SetName, SetMic }
 
 public sealed class JaceCommand
 {

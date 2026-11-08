@@ -46,7 +46,7 @@ await using (var session = await Session.Create())
 
 await using (var session = await Session.Create())
 {
-    await session.Send(new WireMessage(WireKind.Hello, text: "HeyJace/1.1"));
+    await session.Send(new WireMessage(WireKind.Hello, text: "HeyJace/1.2"));
     WireMessage failure = await Next(session.Bridge, WireKind.Status);
     Check(!failure.Success && failure.Text.Contains("Replace the whole HeyJace folder"), "mixed old speech helper gets actionable version error");
     Check(!session.Bridge.Connected, "old helper never becomes ready");

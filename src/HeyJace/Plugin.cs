@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace HeyJace;
 
-[BepInPlugin("dev.local.heyjace", "Hey Jace", "1.2.0")]
+[BepInPlugin("dev.local.heyjace", "Hey Jace", "1.3.0")]
 public sealed class Plugin : BaseUnityPlugin
 {
     private ConfigEntry<bool> listening = null!, sound = null!;
@@ -41,7 +41,7 @@ public sealed class Plugin : BaseUnityPlugin
         Application.runInBackground = true;
         actions = new GameActions(); hud = new JaceHud();
         if (listening.Value) StartSpeech();
-        Logger.LogInfo("Hey Jace 1.2.0 loaded. F10 pauses/restarts listening. Use three Gorilla Tag color digits, actual cosmetic names, and equip outfit followed by its number.");
+        Logger.LogInfo("Hey Jace 1.3.0 loaded. F10 pauses/restarts listening. Outfit, cosmetic, name, mic mode and local time commands are available.");
     }
 
     private void StartSpeech()

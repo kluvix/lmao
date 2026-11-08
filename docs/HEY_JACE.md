@@ -1,4 +1,4 @@
-# Hey Jace 1.2.0
+# Hey Jace 1.3.0
 
 An offline voice assistant for **Windows 64-bit Gorilla Tag with BepInEx 5**. Say **"hey jace"** to hear a generated activation chime, see a popup, and get one of these spoken greetings:
 
@@ -8,7 +8,7 @@ An offline voice assistant for **Windows 64-bit Gorilla Tag with BepInEx 5**. Sa
 
 The popup uses a cyan **[Jace]** tag followed by bold white text with a dark shadow. It is inset farther right in the lower part of the VR view so the text is easier to see through both eyes. There is no separate PC/desktop overlay; a monitor mirroring the headset view can still show the same in-game message. Wake greetings, short listening prompts, and results use this style. The long generic "Try..." help message has been removed. Command failures stay visible so you can read the reason. Spoken replies use Windows' default audio output at a moderately faster rate. Recognition uses Windows' default recording device, so select your headset microphone there before starting the game.
 
-This update improves mixed room codes such as **JACE34**, spoken outfit numbers, and Gorilla Tag RGB numbers. Room spelling and numeric commands have stronger recognition grammars. Unrecognized wording keeps the active reply window open for another attempt, with a short retry message. The helper can consider a bounded alternative transcription when the top result cannot form a valid command. These changes improve the supported recognition paths; microphone accuracy still depends on the Windows speech engine and needs a Windows play test.
+This update separates saved outfits from cosmetics, strengthens the difference between equip and unequip, and adds game name and microphone-mode commands. Owned cosmetic names get pronounceable recognition aliases, and a unique shortened name can match your wardrobe. Alternate speech guesses cannot silently turn an explicit outfit request into a cosmetic request or reverse an equip/unequip action. Time lookup uses the map's actual named/clock presets. Microphone accuracy still depends on the Windows speech engine and needs a Windows play test.
 
 ## Install
 
@@ -44,12 +44,20 @@ Say the command in the same utterance as "hey jace", or wait until the greeting 
 | Equip an owned cosmetic | "equip" followed by its wardrobe display name |
 | Remove a worn cosmetic | "unequip" followed by its wardrobe display name |
 | Equip a saved outfit | "equip outfit two", or "equip outfit" then "two" |
+| Change your game name | "set name to jace", or "set name to" then your name |
+| Set game mic mode | "set mic to open mic", "set mic to push to mute", "set mic to push to talk" |
 
 Colors use exactly **three numbers from 0 to 9: red, green, blue**, matching Gorilla Tag's computer. Say each number separately, such as "nine zero five" for 905. Supported whole-number transcriptions are normalized too. Named colors and hex colors are not accepted. Room codes accept 1–10 letters or digits, including spelled letters, NATO words, and a word followed by digits such as "jace three four" or "jace thirty four" for JACE34. Time supports dawn/morning/sunrise, day, noon/midday, afternoon, sunset, evening, night, midnight, clock hours, and zero-based preset indices available in the current map.
 
-Use the cosmetic's **full actual shop/wardrobe name**, rather than an internal item ID or a shortened description. Jace teaches its offline recognizer the names from your loaded owned inventory. Matching ignores case, spacing, and punctuation; ambiguous names report an error. Cosmetics must already belong to your wardrobe; this does not unlock items.
+Use the cosmetic's **actual shop/wardrobe name** rather than an internal item ID. Jace builds recognition hints from your loaded owned inventory automatically, including pronounceable name variants. Matching ignores case, spacing, and punctuation. A shortened name of at least four normalized characters works when it identifies exactly one owned item; ambiguous names list possible matches instead of choosing a random item. Cosmetics must already belong to your wardrobe; this does not unlock items.
+
+**"Put on"** and **"take off"** are distinct aliases for equip and unequip. Use them if the Windows engine keeps confusing those two words. A close conflicting equip/unequip recognition prompts a retry rather than performing the opposite action. The phrase **"equip outfit three"**, including an `outfit3` transcription, selects saved outfit 3. If an actual cosmetic's name itself looks like an outfit command, say **"equip cosmetic"** or **"unequip cosmetic"** followed by that item's name.
 
 Outfit numbers start at **1** and use the game's existing saved wardrobe outfits, in the same order as the wardrobe. Save the desired outfits in the game first. This command switches an existing slot through the normal wardrobe controls; it respects the number of slots available to your account.
+
+Names follow the game's **1–12 letters/digits** limit. Changes go through the normal game name check and account permissions; Jace reports a submitted request while that check runs. It does not change your Steam or Windows account name.
+
+Mic mode changes use the game's normal open-mic/push-to-mute/push-to-talk setting and save it normally. They do not change Windows devices or voice-chat permissions. **Jace keeps listening for commands regardless of the game's voice-transmission mode; F10 pauses Jace itself.**
 
 Time overrides affect your local view and restore when the plugin unloads, the map changes, you join a room, or the game's time controls take over. Available presets and game commands depend on the installed game version.
 
@@ -81,17 +89,17 @@ bash scripts/build-jace.sh
 
 The shell script sources `scripts/env.sh`; `PIGLESS_TOOL_ROOT` selects the tools directory and `PIGLESS_UNITY_REFERENCE_DIR` can select matching game Unity assemblies. The existing setup obtains official tool/reference dependencies. The speech build restores Microsoft's `System.Speech` 8.0.0 from NuGet and publishes a self-contained `win-x64` single executable.
 
-Both build scripts compile the plugin, run the core behavior checks, real local named-pipe checks, game boundary checks against fake API fixtures, and managed speech-host regression checks, publish the Windows helper, then stage `artifacts/HeyJace/`. Only the two project DLLs, speech executable, and this README enter that package. Reference/game DLLs are never shipped. The scripts do not install into the game or execute the speech helper or game. Publishing needs access to official NuGet packages unless cached.
+Both build scripts compile the plugin, run the core behavior checks, real local named-pipe checks, game boundary checks against fake API fixtures (including names, mic modes, and map time presets), and managed speech-host regression checks, publish the Windows helper, then stage `artifacts/HeyJace/`. Only the two project DLLs, speech executable, and this README enter that package. Reference/game DLLs are never shipped. The scripts do not install into the game or execute the speech helper or game. Publishing needs access to official NuGet packages unless cached.
 
 Core and pipe checks can run on Linux. Builds and game assembly metadata inspection do not verify Windows audio, voices, VR presentation, or in-game behavior; those need the Windows play test described above.
 
 ## Validation record
 
 - Full plugin/core Release build: zero warnings and errors.
-- Parser, mixed word/numeric room codes, spoken numbers, all 1,000 RGB codes, outfits, command windows, confidence/retry handling, aliases, cancellation and wire format **1,942 automated checks passed**, including malformed-message cases.
+- Parser, mixed word/numeric room codes, spoken numbers, all 1,000 RGB codes, outfits, command windows, confidence/retry handling, aliases, cancellation and wire format **2,094 automated checks passed**, including malformed-message cases.
 - Actual local named-pipe bridge: **20 assertions passed**, including duplex delivery, owned-name vocabulary transport, invalid handshakes, truncated/oversized frames, and a nonreading helper that cannot freeze main-thread replies or shutdown.
-- Game boundary: **35 assertions passed**, exercising the real adapter against fake APIs for owned-name equip/unequip, saved-outfit indexing, slot limits, RGB scaling, room joins, local time restoration, thread checks, and disposal. These fixtures do not establish that the current live game accepts every command.
-- Managed speech host: **196 checks passed**, including bounded owned-name vocabulary, spoken outfit choices, room grammar/parser alignment, alternate-transcript selection, deferred greeting guards, and the recognition-completion race handler without starting native speech.
+- Game boundary: **56 assertions passed**, exercising the real adapter against fake APIs for owned-name equip/unequip, saved-outfit indexing, slot limits, RGB scaling, room joins, local time restoration, thread checks, and disposal. These fixtures do not establish that the current live game accepts every command.
+- Managed speech host: **216 checks passed**, including owned-name pronunciation aliases, semantic item identity, equip/unequip conflict handling, outfit separation, new command grammar alignment, alternate-transcript selection, deferred greeting guards, and the recognition-completion race handler without starting native speech.
 - The Windows x64 speech helper was successfully published as a self-contained executable. It includes the runtime; it does not need a separate .NET installation.
 - Room, color, time and wardrobe APIs were inspected in the supplied game assembly as metadata/decompiled text without running that assembly.
 - Windows microphone capture, spoken recognition/replies, headset popup appearance, and actual game actions have **not** been run here. This is an in-game test build.

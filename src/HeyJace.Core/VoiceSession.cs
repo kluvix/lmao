@@ -16,6 +16,7 @@ public sealed class VoiceSession
     private const string Help = "Say that again.";
     private static readonly Regex Wake = new Regex(@"^hey[\s,]+jace(?=$|[\s,.!?:;])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     private static readonly Regex ClockTime = new Regex(@"^(1[0-2]|0?[1-9]|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)(?::00)?\s*([ap])\.?\s*m\.?$", RegexOptions.CultureInvariant);
+    private static readonly Regex OutfitPrefix = new Regex(@"^(?:(?:equip|equipe|quipe|quip|equipped|put on|wear)\s+)?out\s*fit(?:\s+number)?(?=$|\s|\d)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     private static readonly string[] TimeNames = { "dawn", "day", "noon", "afternoon", "sunset", "evening", "night", "midnight", "auto" };
     private static readonly Dictionary<string, char> SpokenLetters = new Dictionary<string, char>(StringComparer.OrdinalIgnoreCase)
     {
@@ -42,8 +43,20 @@ public sealed class VoiceSession
     // Alternate recognition hypotheses can be checked without consuming a wake
     // or pending answer. All session state is value data; Process mutates no
     // shared dictionaries or other referenced objects.
-    public IReadOnlyList<VoiceEvent> Preview(string utterance, float confidence, double time) =>
-        ((VoiceSession)MemberwiseClone()).Process(utterance, confidence, time);
+    public IReadOnlyList<VoiceEvent> Preview(string utterance, float confidence, double time, JaceCommand? semanticCommand = null) =>
+        ((VoiceSession)MemberwiseClone()).Process(utterance, confidence, time, semanticCommand);
+
+    // This identifies explicit wording only; it never authorizes an action or
+    // mutates the session. Speech alternatives use it to preserve action intent.
+    public static bool TryIdentifyIntent(string utterance, out CommandKind kind)
+    {
+        kind = default;
+        if (utterance == null || utterance.Length > 256 || HasControls(utterance)) return false;
+        string text = Normalize(utterance);
+        Match wake = Wake.Match(text);
+        if (wake.Success) text = text.Substring(wake.Length).TrimStart(' ', ',', '.', '!', '?', ':', ';');
+        return TryCommand(StripPolitePrefix(text), out kind, out _);
+    }
 
     public bool IsAwaitingCommand(double now) => expiresAt.HasValue && !double.IsNaN(now) && !double.IsInfinity(now) &&
         (!lastTime.HasValue || now >= lastTime.Value) && now <= expiresAt.Value;
@@ -54,7 +67,7 @@ public sealed class VoiceSession
         ClearIntent();
     }
 
-    public IReadOnlyList<VoiceEvent> Process(string utterance, float confidence, double time)
+    public IReadOnlyList<VoiceEvent> Process(string utterance, float confidence, double time, JaceCommand? semanticCommand = null)
     {
         var events = new List<VoiceEvent>(2);
         if (double.IsNaN(time) || double.IsInfinity(time)) { Reset(); return events; }
@@ -95,10 +108,46 @@ public sealed class VoiceSession
             return events;
         }
 
+        bool reservedOutfit = TryOutfitCommand(StripPolitePrefix(text), out _);
+        if (!reservedOutfit && semanticCommand != null && (semanticCommand.Kind == CommandKind.Equip || semanticCommand.Kind == CommandKind.Unequip))
+        {
+            // Only the speech grammar built from owned, canonical item names
+            // supplies this path. It preserves item identity independently of
+            // words such as "outfit" inside the real cosmetic name. Explicit
+            // outfit-number syntax above always keeps its reserved meaning;
+            // "equip cosmetic <name>" selects an item with such a real name.
+            string canonicalName = semanticCommand.Argument ?? "";
+            bool opposite = pending.HasValue && IsOppositeCosmeticAction(pending.Value, semanticCommand.Kind);
+            bool canonicalPendingAnswer = pending == semanticCommand.Kind && canonicalName.Length > 0 &&
+                string.Equals(Normalize(text), Normalize(canonicalName), StringComparison.OrdinalIgnoreCase);
+            if (!canonicalPendingAnswer && TryIdentifyIntent(text, out CommandKind explicitKind) &&
+                IsOppositeCosmeticAction(explicitKind, semanticCommand.Kind)) opposite = true;
+            if (!opposite && TryArgument(semanticCommand.Kind, canonicalName, out string cosmetic))
+            {
+                ClearIntent();
+                events.Add(new VoiceEvent(VoiceEventKind.Command, command: new JaceCommand(semanticCommand.Kind, cosmetic)));
+            }
+            else
+            {
+                expiresAt = time + CommandWindowSeconds;
+                events.Add(new VoiceEvent(VoiceEventKind.Prompt, opposite ? "Say put on or take off clearly." : "Say the cosmetic name."));
+            }
+            return events;
+        }
+
         if (pending.HasValue)
         {
             CommandKind kind = pending.Value;
             string answer = text;
+            // An unfinished generic equip prefix must not trap a later outfit
+            // request in cosmetic lookup. Only the reserved outfit syntax may
+            // change this pending action; ordinary cosmetic names stay intact.
+            if (kind == CommandKind.Equip && TryOutfitCommand(StripPolitePrefix(text), out string outfitValue))
+            {
+                kind = CommandKind.EquipOutfit;
+                pending = kind;
+                answer = outfitValue;
+            }
             if (kind != CommandKind.Equip && kind != CommandKind.Unequip &&
                 TryCommand(StripPolitePrefix(text), out CommandKind repeatedKind, out string repeatedValue) && repeatedKind == kind)
                 answer = repeatedValue;
@@ -147,16 +196,25 @@ public sealed class VoiceSession
 
     private void ClearIntent() { expiresAt = null; pending = null; }
 
+    private static bool IsOppositeCosmeticAction(CommandKind first, CommandKind second) =>
+        first == CommandKind.Equip && second == CommandKind.Unequip || first == CommandKind.Unequip && second == CommandKind.Equip;
+
     private static bool TryCommand(string text, out CommandKind kind, out string value)
     {
         // Outfit is a separate command and must precede the generic "equip".
-        foreach (string prefix in new[] { "equip outfit number", "equip outfit", "put on outfit number", "put on outfit", "wear outfit number", "wear outfit" })
-            if (text.Equals(prefix, StringComparison.OrdinalIgnoreCase) || text.StartsWith(prefix + " ", StringComparison.OrdinalIgnoreCase))
-            {
-                kind = CommandKind.EquipOutfit;
-                value = text.Substring(prefix.Length).Trim();
-                return true;
-            }
+        if (TryOutfitCommand(text, out value)) { kind = CommandKind.EquipOutfit; return true; }
+        foreach (string prefix in new[] { "put on cosmetic", "equipped cosmetic", "equip cosmetic", "equipe cosmetic", "quipe cosmetic", "quip cosmetic", "wear cosmetic" })
+            if (MatchesPrefix(text, prefix))
+            { kind = CommandKind.Equip; value = text.Substring(prefix.Length).Trim(); return true; }
+        foreach (string prefix in new[] { "take off cosmetic", "unequip cosmetic", "unequipe cosmetic", "unquipe cosmetic", "unquip cosmetic", "remove cosmetic" })
+            if (MatchesPrefix(text, prefix))
+            { kind = CommandKind.Unequip; value = text.Substring(prefix.Length).Trim(); return true; }
+        foreach (string prefix in new[] { "set my name to", "change my name to", "set name to", "change name to", "set my name", "set name" })
+            if (MatchesPrefix(text, prefix))
+            { kind = CommandKind.SetName; value = text.Substring(prefix.Length).Trim(); return true; }
+        foreach (string prefix in new[] { "set my microphone to", "set microphone to", "set my mic to", "change my mic to", "set mic to", "set my mic", "set mic" })
+            if (MatchesPrefix(text, prefix))
+            { kind = CommandKind.SetMic; value = text.Substring(prefix.Length).Trim(); return true; }
         // Longest prefixes go first so the optional words never become part of an argument.
         string[][] prefixes =
         {
@@ -170,7 +228,8 @@ public sealed class VoiceSession
                 "change color", "set my color", "set color to", "set colour", "set color"
             },
             new[] { "change the time to", "change the time", "set the time to", "change time to", "set the time", "change time", "set time to", "set time" },
-            new[] { "put on", "equip", "wear" }, new[] { "take off", "unequip", "remove" }
+            new[] { "put on", "equipped", "equip", "equipe", "quipe", "quip", "wear" },
+            new[] { "take off", "unequip", "unequipe", "unquipe", "unquip", "un equip", "un equipe", "remove" }
         };
         for (int i = 0; i < prefixes.Length; i++)
             foreach (string prefix in prefixes[i])
@@ -189,6 +248,21 @@ public sealed class VoiceSession
         kind = default;
         value = "";
         return false;
+    }
+
+    private static bool MatchesPrefix(string text, string prefix) => text.Equals(prefix, StringComparison.OrdinalIgnoreCase) ||
+        text.StartsWith(prefix + " ", StringComparison.OrdinalIgnoreCase);
+
+    private static bool TryOutfitCommand(string text, out string value)
+    {
+        Match match = OutfitPrefix.Match(text);
+        value = match.Success ? text.Substring(match.Length).Trim() : "";
+        // A pending cosmetic really can be named "Outfit Hat". Bare outfit
+        // answers are reserved only when they are empty or a numeric slot.
+        if (match.Success && (text.StartsWith("outfit", StringComparison.OrdinalIgnoreCase) ||
+            text.StartsWith("out fit", StringComparison.OrdinalIgnoreCase)) && value.Length > 0 &&
+            !TryOutfitNumber(value, out _)) return false;
+        return match.Success;
     }
 
     private static bool TryArgument(CommandKind kind, string text, out string argument)
@@ -234,16 +308,50 @@ public sealed class VoiceSession
                 return true;
             case CommandKind.Equip:
             case CommandKind.Unequip:
-                if (text.Length < 1 || text.Length > 64) return false;
-                foreach (char c in text)
-                    if (!char.IsLetterOrDigit(c) && c != ' ' && c != '-' && c != '_' && c != '\'' && c != '&' && c != '(' && c != ')' && c != '.') return false;
+                if (text == null || text.Length < 1 || text.Length > 64 || HasControls(text)) return false;
                 if (!ContainsLetterOrDigit(text)) return false;
                 argument = text;
                 return true;
             case CommandKind.EquipOutfit:
                 return TryOutfitNumber(text, out argument);
+            case CommandKind.SetName:
+                return TryName(text, out argument);
+            case CommandKind.SetMic:
+                string mode = Regex.Replace(text.ToLowerInvariant().Replace('-', ' '), @"\s+", " ", RegexOptions.CultureInvariant);
+                switch (mode)
+                {
+                    case "open mic": case "open mike": case "open microphone": argument = "OPEN MIC"; return true;
+                    case "push to talk": case "push too talk": case "push two talk": argument = "PUSH TO TALK"; return true;
+                    case "push to mute": case "push too mute": case "push two mute": argument = "PUSH TO MUTE"; return true;
+                    default: return false;
+                }
             default: return false;
         }
+    }
+
+    private static bool TryName(string text, out string argument)
+    {
+        argument = "";
+        var name = new StringBuilder();
+        string[] words = text.ToLowerInvariant().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        if (words.Length == 0) return false;
+        foreach (string word in words)
+        {
+            int digit = words.Length > 1 ? ColorSpec.Digit(word) : -1;
+            if (digit >= 0) name.Append((char)('0' + digit));
+            else
+            {
+                foreach (char character in word)
+                {
+                    if (!(character >= 'a' && character <= 'z') && !(character >= '0' && character <= '9')) return false;
+                    name.Append(char.ToUpperInvariant(character));
+                }
+            }
+            if (name.Length > 12) return false;
+        }
+        if (name.Length == 0) return false;
+        argument = name.ToString();
+        return true;
     }
 
     private static bool TryOutfitNumber(string text, out string argument)
@@ -350,6 +458,8 @@ public sealed class VoiceSession
             case CommandKind.SetTime: return "Say the time, or normal.";
             case CommandKind.Equip: return "Say the cosmetic name.";
             case CommandKind.Unequip: return "Say the cosmetic name.";
+            case CommandKind.SetName: return "Say a name with up to twelve letters or numbers.";
+            case CommandKind.SetMic: return "Say open mic, push to mute, or push to talk.";
             default: return "Say the outfit number.";
         }
     }
