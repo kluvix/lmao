@@ -1,5 +1,7 @@
 # Pigless mods: recovered source and changes
 
+**Hey Jace** is the separate offline Windows voice-assistant mod. See [its commands, installation, and validation notes](docs/HEY_JACE.md). Build it with `bash scripts/build-jace.sh` or `BuildJace.ps1`; install the complete plugin folder, including its speech helper.
+
 **Pigless Bunny** adds a local low-poly bunny companion with grip pickup, hand hopping, and shoulder perching. See [its controls, build, and validation notes](docs/PIGLESS_BUNNY.md); build it independently with `bash scripts/build-bunny.sh` or `BuildBunny.ps1`.
 
 The separate **Sticky Holdables** plugin keeps equipped local holdables attached without holding grip. Press **F8** to restore normal grip behavior. See [its build, installation, and validation notes](docs/STICKY_HOLDABLES.md); it builds independently with `bash scripts/build-holdables.sh` or `BuildHoldables.ps1`.

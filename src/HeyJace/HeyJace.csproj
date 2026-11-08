@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>12</LangVersion>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AssemblyName>HeyJace</AssemblyName>
+    <Version>1.0.0</Version>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../HeyJace.Core/HeyJace.Core.csproj" />
+    <Reference Include="BepInEx" HintPath="$(ToolReferenceDir)/BepInEx.dll" Private="false" />
+    <Reference Include="0Harmony" HintPath="$(ToolReferenceDir)/0Harmony.dll" Private="false" />
+    <Reference Include="UnityEngine" HintPath="$(UnityReferenceDir)/UnityEngine.dll" Private="false" />
+    <Reference Include="UnityEngine.CoreModule" HintPath="$(UnityReferenceDir)/UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="UnityEngine.AudioModule" HintPath="$(UnityReferenceDir)/UnityEngine.AudioModule.dll" Private="false" />
+    <Reference Include="UnityEngine.IMGUIModule" HintPath="$(UnityReferenceDir)/UnityEngine.IMGUIModule.dll" Private="false" />
+    <Reference Include="UnityEngine.TextRenderingModule" HintPath="$(UnityReferenceDir)/UnityEngine.TextRenderingModule.dll" Private="false" />
+  </ItemGroup>
+</Project>
