@@ -1,5 +1,7 @@
 # Pigless mods: recovered source and changes
 
+**Pigless Bunny** adds a local low-poly bunny companion with grip pickup, hand hopping, and shoulder perching. See [its controls, build, and validation notes](docs/PIGLESS_BUNNY.md); build it independently with `bash scripts/build-bunny.sh` or `BuildBunny.ps1`.
+
 The separate **Sticky Holdables** plugin keeps equipped local holdables attached without holding grip. Press **F8** to restore normal grip behavior. See [its build, installation, and validation notes](docs/STICKY_HOLDABLES.md); it builds independently with `bash scripts/build-holdables.sh` or `BuildHoldables.ps1`.
 
 Recovered from the supplied Pigless Camera 1.3.0 and Pigless Sheesh 2.2.0 assemblies. The edited versions build as **Camera 1.4.0** and **Sheesh 2.3.0**. This is decompiled source, not the original author's source tree, comments, or project layout.

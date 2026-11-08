@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>12</LangVersion>
+    <Nullable>enable</Nullable>
+    <AssemblyName>PiglessBunny</AssemblyName>
+    <Version>1.0.0</Version>
+    <Description>A local low-poly bunny companion for Gorilla Tag.</Description>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="BepInEx" HintPath="$(ToolReferenceDir)/BepInEx.dll" Private="false" />
+    <Reference Include="UnityEngine" HintPath="$(UnityReferenceDir)/UnityEngine.dll" Private="false" />
+    <Reference Include="UnityEngine.CoreModule" HintPath="$(UnityReferenceDir)/UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="UnityEngine.PhysicsModule" HintPath="$(UnityReferenceDir)/UnityEngine.PhysicsModule.dll" Private="false" />
+  </ItemGroup>
+  <Target Name="CheckBunnyReferences" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(ToolReferenceDir)/BepInEx.dll')" Text="Missing BepInEx 5. Set ToolReferenceDir to a clean BepInEx/core folder." />
+    <Error Condition="!Exists('$(UnityReferenceDir)/UnityEngine.CoreModule.dll') Or !Exists('$(UnityReferenceDir)/UnityEngine.PhysicsModule.dll')" Text="Missing Unity Core/Physics references. Set UnityReferenceDir to the game's Managed folder." />
+  </Target>
+</Project>

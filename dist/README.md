@@ -1,5 +1,7 @@
 # Built mod DLLs
 
+`PiglessBunny.dll` is the standalone local bunny companion, version 1.0.0. It uses an original low-poly, pixel-textured model with grip pickup and shoulder perching. Its Release build and 36 behavior cases (154 assertions) passed, and player/controller APIs were inspected against the supplied game metadata. Rendering and VR interaction still need an in-game check. See [Pigless Bunny instructions](../docs/PIGLESS_BUNNY.md).
+
 `StickyHoldables.dll` is the standalone Sticky Holdables 1.0.1 plugin. It mutes repeated hover vibration from carried local holdables. Its Release build passed with zero warnings/errors, and 25 synthetic API-contract cases (201 assertions) passed. It is not game-tested. See [Sticky Holdables instructions](../docs/STICKY_HOLDABLES.md). Replace the older StickyHoldables copy rather than installing both versions.
 
 To download Sticky Holdables with PowerShell, the source includes [Download-StickyHoldables.ps1](../scripts/Download-StickyHoldables.ps1). It saves the DLL to Downloads, checks its SHA-256 before keeping it, and never runs the DLL, replaces an existing file, or changes the game installation.
