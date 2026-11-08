@@ -19,18 +19,15 @@ public readonly struct ColorSpec
         color = default;
         if (text == null || text.Length > 64) return false;
         foreach (char c in text) if (char.IsControl(c) || c == '\u2028' || c == '\u2029') return false;
-        string value = text.Trim().ToLowerInvariant();
+        string value = Regex.Replace(text.Trim().ToLowerInvariant().Replace(',', ' '), @"\s+", " ");
+        value = Regex.Replace(value, @"(?<=[a-z])-(?=[a-z])", " ", RegexOptions.CultureInvariant);
         string digits = value;
         if (digits.Length != 3 || !IsDigits(digits))
         {
-            string[] components = Regex.Split(value, @"[\s,]+", RegexOptions.CultureInvariant);
-            if (components.Length != 3) return false;
-            digits = "";
-            foreach (string component in components)
+            if (!SpokenNumbers.TrySequence(value, out digits) || digits.Length != 3)
             {
-                int digit = Digit(component);
-                if (digit < 0) return false;
-                digits += (char)('0' + digit);
+                if (!SpokenNumbers.TryInteger(value, out int number) || number < 100 || number > 999) return false;
+                digits = number.ToString(System.Globalization.CultureInfo.InvariantCulture);
             }
         }
         color = new ColorSpec((digits[0] - '0') / 9f, (digits[1] - '0') / 9f, (digits[2] - '0') / 9f, digits);

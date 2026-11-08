@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace HeyJace;
 
-[BepInPlugin("dev.local.heyjace", "Hey Jace", "1.1.0")]
+[BepInPlugin("dev.local.heyjace", "Hey Jace", "1.2.0")]
 public sealed class Plugin : BaseUnityPlugin
 {
     private ConfigEntry<bool> listening = null!, sound = null!;
@@ -41,14 +41,14 @@ public sealed class Plugin : BaseUnityPlugin
         Application.runInBackground = true;
         actions = new GameActions(); hud = new JaceHud();
         if (listening.Value) StartSpeech();
-        Logger.LogInfo("Hey Jace 1.1.0 loaded. F10 pauses/restarts listening. Use three Gorilla Tag color digits, actual cosmetic names, and equip outfit followed by its number.");
+        Logger.LogInfo("Hey Jace 1.2.0 loaded. F10 pauses/restarts listening. Use three Gorilla Tag color digits, actual cosmetic names, and equip outfit followed by its number.");
     }
 
     private void StartSpeech()
     {
         speech?.Dispose(); speech = new SpeechBridge(); lastCommandId = 0;
         vocabulary.Clear(); vocabularyFingerprint = ""; nextVocabularyCheck = 0; speechFailure = null; commandFailure = false; holdResultUntil = 0;
-        speech.Start(); hud?.Show("HEY JACE", "Starting offline Windows speech...", 8);
+        speech.Start(); hud?.Show("HEY JACE", "Starting...", 8);
     }
 
     private void ListeningChanged(object sender, EventArgs e)
@@ -95,8 +95,9 @@ public sealed class Plugin : BaseUnityPlugin
                         bool heard = incoming.Text.StartsWith("Heard:", StringComparison.Ordinal);
                         if (ready) speechFailure = null;
                         if (heard) { commandFailure = false; holdResultUntil = 0; }
-                        if (speechFailure == null && !(ready && (commandFailure || Time.unscaledTime < holdResultUntil)))
-                            hud?.Show(incoming.Text.StartsWith("Heard:", StringComparison.Ordinal) ? "JACE • HEARD YOU" : "HEY JACE", incoming.Text, 8);
+                        bool diagnostic = heard || incoming.Text.StartsWith("Recognition:", StringComparison.Ordinal);
+                        if (!diagnostic && speechFailure == null && !(ready && (commandFailure || Time.unscaledTime < holdResultUntil)))
+                            hud?.Show("HEY JACE", ready ? "Listening." : incoming.Text, 8);
                         Logger.LogInfo(incoming.Text);
                     }
                     break;

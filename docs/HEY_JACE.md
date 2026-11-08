@@ -1,4 +1,4 @@
-# Hey Jace 1.1.0
+# Hey Jace 1.2.0
 
 An offline voice assistant for **Windows 64-bit Gorilla Tag with BepInEx 5**. Say **"hey jace"** to hear a generated activation chime, see a popup, and get one of these spoken greetings:
 
@@ -6,9 +6,9 @@ An offline voice assistant for **Windows 64-bit Gorilla Tag with BepInEx 5**. Sa
 - "what do you want chud"
 - "whats goody jacemcgames"
 
-The popup matches the requested chat style: a cyan **[Jace]** tag followed by bold white text with a dark shadow in the lower left of the in-game VR view. There is no separate PC/desktop overlay; a monitor mirroring the headset view can still show the same in-game message. Wake greetings, listening prompts, and results use this style. Command failures stay visible so you can read the reason. Spoken replies use Windows' default audio output. Recognition uses Windows' default recording device, so select your headset microphone there before starting the game.
+The popup uses a cyan **[Jace]** tag followed by bold white text with a dark shadow. It is inset farther right in the lower part of the VR view so the text is easier to see through both eyes. There is no separate PC/desktop overlay; a monitor mirroring the headset view can still show the same in-game message. Wake greetings, short listening prompts, and results use this style. The long generic "Try..." help message has been removed. Command failures stay visible so you can read the reason. Spoken replies use Windows' default audio output at a moderately faster rate. Recognition uses Windows' default recording device, so select your headset microphone there before starting the game.
 
-This update adds numeric saved outfits, numeric-only Gorilla Tag RGB colors, and recognition vocabulary built from the actual names in your owned wardrobe. Answers with lower speech confidence no longer silently cancel an activated command. A voice-output failure no longer shuts down command listening.
+This update improves mixed room codes such as **JACE34**, spoken outfit numbers, and Gorilla Tag RGB numbers. Room spelling and numeric commands have stronger recognition grammars. Unrecognized wording keeps the active reply window open for another attempt, with a short retry message. The helper can consider a bounded alternative transcription when the top result cannot form a valid command. These changes improve the supported recognition paths; microphone accuracy still depends on the Windows speech engine and needs a Windows play test.
 
 ## Install
 
@@ -32,11 +32,11 @@ The packaged helper includes its .NET runtime; installing the .NET SDK or a sepa
 
 ## Commands
 
-Say the command in the same utterance as "hey jace", or wait until the greeting finishes and the popup says it is listening before speaking. Each wake allows one command; follow-up answers have a 10-second window that pauses during spoken replies. Invalid answers prompt a retry within a fresh answer window. Say "cancel" to discard a pending command.
+Say the command in the same utterance as "hey jace", or wait until the greeting finishes and the popup says it is listening before speaking. Each wake allows one command; follow-up answers have a 10-second window that pauses during spoken replies. Argument and retry hints are text-only, so Jace keeps listening while you finish your answer. Greetings and actual command results are spoken. Invalid answers prompt a retry within a fresh answer window. Say "cancel" to discard a pending command.
 
 | Action | Examples after "hey jace" |
 | --- | --- |
-| Join a room | "join code BANANA", or "join code" then "BANANA" |
+| Join a room | "join code jace three four", "join code jace thirty four", or "join code" then "BANANA" |
 | Spell a code | "join code bravo alpha november alpha november alpha" |
 | Change color | "change my color to nine zero five", or "change my color to" then "nine zero five" |
 | Set local time | "change the time to morning", "change the time to night", "change the time to six AM", "change the time to 2" |
@@ -45,7 +45,7 @@ Say the command in the same utterance as "hey jace", or wait until the greeting 
 | Remove a worn cosmetic | "unequip" followed by its wardrobe display name |
 | Equip a saved outfit | "equip outfit two", or "equip outfit" then "two" |
 
-Colors use exactly **three numbers from 0 to 9: red, green, blue**, matching Gorilla Tag's computer. Say each number separately, such as "nine zero five" for 905. Named colors and hex colors are no longer accepted. Room codes accept 1–10 letters or digits, including spelled letters and NATO words. Time supports dawn/morning/sunrise, day, noon/midday, afternoon, sunset, evening, night, midnight, clock hours, and zero-based preset indices available in the current map.
+Colors use exactly **three numbers from 0 to 9: red, green, blue**, matching Gorilla Tag's computer. Say each number separately, such as "nine zero five" for 905. Supported whole-number transcriptions are normalized too. Named colors and hex colors are not accepted. Room codes accept 1–10 letters or digits, including spelled letters, NATO words, and a word followed by digits such as "jace three four" or "jace thirty four" for JACE34. Time supports dawn/morning/sunrise, day, noon/midday, afternoon, sunset, evening, night, midnight, clock hours, and zero-based preset indices available in the current map.
 
 Use the cosmetic's **full actual shop/wardrobe name**, rather than an internal item ID or a shortened description. Jace teaches its offline recognizer the names from your loaded owned inventory. Matching ignores case, spacing, and punctuation; ambiguous names report an error. Cosmetics must already belong to your wardrobe; this does not unlock items.
 
@@ -59,7 +59,7 @@ If startup reports missing speech or microphone support, check the English Speec
 
 If the helper is missing, copy the whole plugin folder again. A game update can change reflected APIs; a failed action reports an error instead of claiming success. Windows microphone capture, installed voices, VR rendering, background execution, and live game actions require a Windows play test.
 
-If waking works but a command does nothing, wait for Jace to finish speaking, then try a complete phrase such as "hey jace change my color to nine zero five". The popup shows recognized commands and specific game errors; rejected active speech prompts a retry instead of silently staying on the wake message. Check `BepInEx/LogOutput.log` for `Heard:` and `Voice command` entries. If a command reaches `Voice command` but fails, include the exact error text when reporting it. Only activated command text is logged; this mod does not save microphone audio or transcribe idle conversation to its log.
+If waking works but a command does nothing, wait for Jace to finish speaking, then try a complete phrase such as "hey jace change my color to nine zero five". The popup shows short prompts and specific game errors. Recognition diagnostics stay in `BepInEx/LogOutput.log` rather than filling the VR view: look for `Heard:`, `Recognition:`, and `Voice command` entries. If recognition still fails, those entries show what the Windows engine actually heard, its selected grammar, and bounded alternatives. If a command reaches `Voice command` but fails, include the exact error text when reporting it. Only activated command text is logged; this mod does not save microphone audio or transcribe idle conversation to its log.
 
 ## Build
 
@@ -88,10 +88,10 @@ Core and pipe checks can run on Linux. Builds and game assembly metadata inspect
 ## Validation record
 
 - Full plugin/core Release build: zero warnings and errors.
-- Parser, all 1,000 RGB codes, outfits, command windows, confidence/retry handling, aliases, cancellation and wire format **1,837 automated checks passed**, including malformed-message cases.
+- Parser, mixed word/numeric room codes, spoken numbers, all 1,000 RGB codes, outfits, command windows, confidence/retry handling, aliases, cancellation and wire format **1,942 automated checks passed**, including malformed-message cases.
 - Actual local named-pipe bridge: **20 assertions passed**, including duplex delivery, owned-name vocabulary transport, invalid handshakes, truncated/oversized frames, and a nonreading helper that cannot freeze main-thread replies or shutdown.
 - Game boundary: **35 assertions passed**, exercising the real adapter against fake APIs for owned-name equip/unequip, saved-outfit indexing, slot limits, RGB scaling, room joins, local time restoration, thread checks, and disposal. These fixtures do not establish that the current live game accepts every command.
-- Managed speech host: **117 checks passed**, including bounded owned-name vocabulary, all spoken outfit choices, and the actual recognition-completion race handler without starting native speech.
+- Managed speech host: **196 checks passed**, including bounded owned-name vocabulary, spoken outfit choices, room grammar/parser alignment, alternate-transcript selection, deferred greeting guards, and the recognition-completion race handler without starting native speech.
 - The Windows x64 speech helper was successfully published as a self-contained executable. It includes the runtime; it does not need a separate .NET installation.
 - Room, color, time and wardrobe APIs were inspected in the supplied game assembly as metadata/decompiled text without running that assembly.
 - Windows microphone capture, spoken recognition/replies, headset popup appearance, and actual game actions have **not** been run here. This is an in-game test build.

@@ -15,5 +15,6 @@
     <Compile Include="../PipeConnection.cs" Link="PipeConnection.cs" />
     <Compile Include="../RecognitionVocabulary.cs" Link="RecognitionVocabulary.cs" />
     <Compile Include="../RecognitionGrammars.cs" Link="RecognitionGrammars.cs" />
+    <Compile Include="../RecognitionCandidates.cs" Link="RecognitionCandidates.cs" />
   </ItemGroup>
 </Project>

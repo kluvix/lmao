@@ -13,7 +13,7 @@ public sealed class VoiceSession
     // Short dictated codes and names score lower than the fixed wake grammar.
     public const float MinimumFollowUpConfidence = 0.4f;
     public const double CommandWindowSeconds = 10;
-    private const string Help = "Try: join code BANANA, change my color to nine zero five, change the time to night, equip a cosmetic name, unequip a cosmetic name, or equip outfit one.";
+    private const string Help = "Say that again.";
     private static readonly Regex Wake = new Regex(@"^hey[\s,]+jace(?=$|[\s,.!?:;])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     private static readonly Regex ClockTime = new Regex(@"^(1[0-2]|0?[1-9]|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)(?::00)?\s*([ap])\.?\s*m\.?$", RegexOptions.CultureInvariant);
     private static readonly string[] TimeNames = { "dawn", "day", "noon", "afternoon", "sunset", "evening", "night", "midnight", "auto" };
@@ -38,6 +38,12 @@ public sealed class VoiceSession
     private CommandKind? pending;
 
     public CommandKind? PendingKind => pending;
+
+    // Alternate recognition hypotheses can be checked without consuming a wake
+    // or pending answer. All session state is value data; Process mutates no
+    // shared dictionaries or other referenced objects.
+    public IReadOnlyList<VoiceEvent> Preview(string utterance, float confidence, double time) =>
+        ((VoiceSession)MemberwiseClone()).Process(utterance, confidence, time);
 
     public bool IsAwaitingCommand(double now) => expiresAt.HasValue && !double.IsNaN(now) && !double.IsInfinity(now) &&
         (!lastTime.HasValue || now >= lastTime.Value) && now <= expiresAt.Value;
@@ -79,6 +85,8 @@ public sealed class VoiceSession
         }
         else if (!expiresAt.HasValue || text.Length == 0) return events;
 
+        if (!pending.HasValue) text = StripPolitePrefix(text);
+
         if (text.Equals("cancel", StringComparison.OrdinalIgnoreCase) || text.Equals("never mind", StringComparison.OrdinalIgnoreCase) ||
             text.Equals("stop", StringComparison.OrdinalIgnoreCase))
         {
@@ -90,7 +98,11 @@ public sealed class VoiceSession
         if (pending.HasValue)
         {
             CommandKind kind = pending.Value;
-            if (TryArgument(kind, text, out string argument))
+            string answer = text;
+            if (kind != CommandKind.Equip && kind != CommandKind.Unequip &&
+                TryCommand(StripPolitePrefix(text), out CommandKind repeatedKind, out string repeatedValue) && repeatedKind == kind)
+                answer = repeatedValue;
+            if (TryArgument(kind, answer, out string argument))
             {
                 ClearIntent();
                 events.Add(new VoiceEvent(VoiceEventKind.Command, command: new JaceCommand(kind, argument)));
@@ -107,7 +119,9 @@ public sealed class VoiceSession
 
         if (!TryCommand(text, out CommandKind commandKind, out string value))
         {
-            ClearIntent();
+            // Dictation can briefly return an incomplete or wrong prefix. The
+            // next attempt belongs to this wake; do not recite a command list.
+            expiresAt = time + CommandWindowSeconds;
             events.Add(new VoiceEvent(VoiceEventKind.Prompt, Help));
             return events;
         }
@@ -146,9 +160,11 @@ public sealed class VoiceSession
         // Longest prefixes go first so the optional words never become part of an argument.
         string[][] prefixes =
         {
-            new[] { "join the room code", "join room code", "join the room", "join the code", "join code", "join room" },
+            new[] { "join the room code", "join room code", "joined room code", "join the room", "join the code", "joined code", "join code", "joined room", "join room" },
             new[]
             {
+                "change my colour code to", "change my color code to", "set my colour code to", "set my color code to",
+                "change my colour two", "change my color two", "set my colour two", "set my color two", "change colour two", "change color two",
                 "change my colour to", "change my color to", "change my colour", "change colour to", "set my colour to",
                 "change my color", "change color to", "set my color to", "change colour", "set my colour", "set colour to",
                 "change color", "set my color", "set color to", "set colour", "set color"
@@ -160,8 +176,14 @@ public sealed class VoiceSession
             foreach (string prefix in prefixes[i])
                 if (text.Equals(prefix, StringComparison.OrdinalIgnoreCase) || text.StartsWith(prefix + " ", StringComparison.OrdinalIgnoreCase))
                 {
+                    string candidate = text.Substring(prefix.Length).Trim();
+                    // "two" can be the dictated preposition "to" or the
+                    // first RGB digit. Consume it as a prefix only when what
+                    // remains is already a complete three-channel color.
+                    if ((CommandKind)i == CommandKind.SetColor && prefix.EndsWith(" two", StringComparison.Ordinal) &&
+                        !ColorSpec.TryParse(candidate, out _)) continue;
                     kind = (CommandKind)i;
-                    value = text.Substring(prefix.Length).Trim();
+                    value = candidate;
                     return true;
                 }
         kind = default;
@@ -227,50 +249,10 @@ public sealed class VoiceSession
     private static bool TryOutfitNumber(string text, out string argument)
     {
         argument = "";
-        string value = text.ToLowerInvariant().Replace('-', ' ');
+        string value = text.ToLowerInvariant();
+        value = Regex.Replace(value, @"(?<=[a-z])-(?=[a-z])", " ", RegexOptions.CultureInvariant);
         if (value.StartsWith("number ", StringComparison.Ordinal)) value = value.Substring(7);
-        int number = ColorSpec.Digit(value);
-        if (number < 0)
-        {
-            switch (value)
-            {
-                case "ten": number = 10; break;
-                case "eleven": number = 11; break;
-                case "twelve": number = 12; break;
-                case "thirteen": number = 13; break;
-                case "fourteen": number = 14; break;
-                case "fifteen": number = 15; break;
-                case "sixteen": number = 16; break;
-                case "seventeen": number = 17; break;
-                case "eighteen": number = 18; break;
-                case "nineteen": number = 19; break;
-                default:
-                    if (!int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out number))
-                    {
-                        string[] words = value.Split(' ');
-                        if (words.Length < 1 || words.Length > 2) return false;
-                        int tens;
-                        switch (words[0])
-                        {
-                            case "twenty": tens = 20; break;
-                            case "thirty": tens = 30; break;
-                            case "forty": tens = 40; break;
-                            case "fifty": tens = 50; break;
-                            case "sixty": tens = 60; break;
-                            case "seventy": tens = 70; break;
-                            case "eighty": tens = 80; break;
-                            case "ninety": tens = 90; break;
-                            default: return false;
-                        }
-                        int ones = words.Length == 1 ? 0 : ColorSpec.Digit(words[1]);
-                        if (ones < 0 || (words.Length == 2 && ones == 0)) return false;
-                        number = tens + ones;
-                    }
-                    break;
-            }
-        }
-        // Slots start at one; the game adapter checks the actual saved count.
-        if (number < 1 || number > 999) return false;
+        if (!SpokenNumbers.TryInteger(value, out int number) || number < 1 || number > 999) return false;
         argument = number.ToString(CultureInfo.InvariantCulture);
         return true;
     }
@@ -278,24 +260,45 @@ public sealed class VoiceSession
     private static bool TryRoom(string value, out string argument)
     {
         argument = "";
-        string text = value.ToLowerInvariant();
-        // Spoken digits and NATO words have priority; other contiguous words preserve a literal code such as BANANA.
+        string text = value.ToLowerInvariant().Replace(',', ' ');
+        // Preserve literal single-word codes (FOR is not changed to 4) while
+        // retaining the existing NATO/single-digit spelling convention.
         int singleDigit = ColorSpec.Digit(text);
         if (singleDigit >= 0) { argument = singleDigit.ToString(CultureInfo.InvariantCulture); return true; }
         if (SpokenLetters.TryGetValue(text, out char singleLetter)) { argument = singleLetter.ToString(); return true; }
         if (text.Length >= 1 && text.Length <= 10 && IsRoomLiteral(text))
         { argument = text.ToUpperInvariant(); return true; }
 
-        text = text.Replace("double you", "w").Replace("x ray", "xray");
+        text = Regex.Replace(text.Replace("double you", "w").Replace("x ray", "xray"), @"(?<=[a-z])-(?=[a-z])", " ", RegexOptions.CultureInvariant);
         string[] tokens = text.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length < 1 || tokens.Length > 12) return false;
         var code = new StringBuilder();
-        foreach (string token in tokens)
+        for (int i = 0; i < tokens.Length;)
         {
-            int digit = ColorSpec.Digit(token);
-            if (digit >= 0) code.Append((char)('0' + digit));
-            else if (token.Length == 1 && IsRoomLiteral(token)) code.Append(char.ToUpperInvariant(token[0]));
-            else if (SpokenLetters.TryGetValue(token, out char letter)) code.Append(letter);
-            else return false;
+            string token = tokens[i];
+            if (SpokenNumbers.IsToken(token, homophones: i > 0))
+            {
+                int end = i + 1;
+                while (end < tokens.Length && SpokenNumbers.IsToken(tokens[end])) end++;
+                string numbers = string.Join(" ", tokens, i, end - i);
+                if (SpokenNumbers.TrySequence(numbers, out string digits)) code.Append(digits);
+                else if (SpokenNumbers.TryInteger(numbers, out int number)) code.Append(number.ToString(CultureInfo.InvariantCulture));
+                else return false;
+                i = end;
+            }
+            else if (token.Length == 1 && IsRoomLiteral(token)) { code.Append(char.ToUpperInvariant(token[0])); i++; }
+            else if (SpokenLetters.TryGetValue(token, out char letter)) { code.Append(letter); i++; }
+            else
+            {
+                // Dictation splits a mixed code into a word and numbers, e.g.
+                // Jace 34 / Jace three four. Permit one initial word only and
+                // require an explicit numeric suffix. Arbitrary sentences and
+                // multiword commands must never be concatenated into a room.
+                if (i != 0 || tokens.Length < 2 || !IsRoomLiteral(token) ||
+                    token.Length > 9 || !SpokenNumbers.IsToken(tokens[1])) return false;
+                code.Append(token.ToUpperInvariant());
+                i++;
+            }
             if (code.Length > 10) return false;
         }
         if (code.Length == 0) return false;
@@ -321,18 +324,33 @@ public sealed class VoiceSession
         return false;
     }
 
+    private static string StripPolitePrefix(string text)
+    {
+        // Only strip phrases at the start of an already authorized command.
+        // Cosmetic names and literal code arguments retain their spelling.
+        for (int i = 0; i < 3; i++)
+        {
+            string before = text;
+            foreach (string prefix in new[] { "can you please ", "could you please ", "would you please ", "can you ", "could you ", "would you ", "please " })
+                if (text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                { text = text.Substring(prefix.Length).TrimStart(' ', ','); break; }
+            if (text == before) break;
+        }
+        return text;
+    }
+
     private static string Normalize(string text) => Regex.Replace(text.Trim().Replace('\u2019', '\'').Replace('\u2018', '\'').Replace('\u2013', '-').Replace('\u2014', '-'), @"\s+", " ").TrimEnd(' ', '.', '!', '?', ',', ';', ':');
 
     private static string ArgumentHelp(CommandKind kind)
     {
         switch (kind)
         {
-            case CommandKind.JoinRoom: return "Say a room code of 1 to 10 letters or digits; you can spell it with NATO words.";
-            case CommandKind.SetColor: return "Say the three Gorilla Tag color numbers in red, green, blue order, each from zero to nine. For example: nine zero five.";
-            case CommandKind.SetTime: return "Say morning, day, noon, afternoon, sunset, evening, night, midnight, auto, a clock hour such as six AM, or a preset index.";
-            case CommandKind.Equip: return "Say the actual name of an owned cosmetic to equip.";
-            case CommandKind.Unequip: return "Say the actual name of a cosmetic to unequip.";
-            default: return "Say the saved outfit number, starting at one.";
+            case CommandKind.JoinRoom: return "Say the room code.";
+            case CommandKind.SetColor: return "Say three color digits, red, green, blue.";
+            case CommandKind.SetTime: return "Say the time, or normal.";
+            case CommandKind.Equip: return "Say the cosmetic name.";
+            case CommandKind.Unequip: return "Say the cosmetic name.";
+            default: return "Say the outfit number.";
         }
     }
 }

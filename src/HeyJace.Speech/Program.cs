@@ -88,12 +88,13 @@ internal static class Program
 internal sealed class SpeechHost : IDisposable
 {
     private abstract record HostEvent;
-    private sealed record Heard(string Text, float Confidence, long Timestamp) : HostEvent;
+    private sealed record Heard(string Text, float Confidence, long Timestamp, string Grammar, RecognitionCandidate[] Candidates) : HostEvent;
     private sealed record Rejected(long Timestamp) : HostEvent;
     private sealed record FromParent(WireMessage Message) : HostEvent;
     private sealed record SpeechFailed(string Message) : HostEvent;
     private sealed record ClockTick : HostEvent;
     private sealed record ResumeRecognition : HostEvent;
+    private sealed record ResponseDue(string Text, int Version, CommandKind? Pending) : HostEvent;
 
     private static readonly string[] Greetings =
     {
@@ -122,6 +123,8 @@ internal sealed class SpeechHost : IDisposable
     private bool _vocabularyDirty;
     private volatile bool _resumeWhenStopped;
     private int _resumeQueued;
+    private int _responseVersion;
+    private string? _unspokenGreeting;
 
     internal SpeechHost(PipeConnection connection, CancellationTokenSource stop)
     { _connection = connection; _stop = stop; }
@@ -142,12 +145,19 @@ internal sealed class SpeechHost : IDisposable
                     case Heard heard when heard.Timestamp >= Interlocked.Read(ref _acceptAfter):
                         double eventTime = (double)(heard.Timestamp - _speechPausedTicks) / Stopwatch.Frequency;
                         bool wasArmed = _session.IsAwaitingCommand(eventTime);
+                        RecognitionCandidate selected = RecognitionCandidates.Select(_session, heard.Candidates, eventTime);
+                        string original = heard.Text;
+                        heard = heard with { Text = selected.Text, Confidence = selected.Confidence };
                         IReadOnlyList<VoiceEvent> voiceEvents = _session.Process(heard.Text, heard.Confidence, eventTime);
+                        if (voiceEvents.Count > 0) _responseVersion++;
                         bool woke = voiceEvents.Any(item => item.Kind == VoiceEventKind.Wake);
                         // Never send transcripts of unrelated ambient speech to
                         // the game/log. Diagnostics belong to a trusted wake.
                         if (wasArmed || woke)
                             await StatusAsync("Heard: " + heard.Text + " (" + heard.Confidence.ToString("0.00", CultureInfo.InvariantCulture) + ")").ConfigureAwait(false);
+                        if ((wasArmed || woke) && !voiceEvents.Any(value => value.Kind == VoiceEventKind.Command))
+                            await StatusAsync("Recognition: grammar=" + heard.Grammar + "; best=" + original + "; alternatives=" +
+                                string.Join(" / ", heard.Candidates.Take(5).Select(value => value.Text + " (" + value.Confidence.ToString("0.00", CultureInfo.InvariantCulture) + ")"))).ConfigureAwait(false);
                         if (wasArmed && voiceEvents.Count == 0 && heard.Confidence < VoiceSession.MinimumFollowUpConfidence)
                             await StatusAsync("Didn't catch that confidently. Please say the command or answer again.").ConfigureAwait(false);
                         UpdateGrammarState();
@@ -155,6 +165,7 @@ internal sealed class SpeechHost : IDisposable
                         if (woke)
                         {
                             greeting = Greetings[_greetingIndex++ % Greetings.Length];
+                            _unspokenGreeting = greeting;
                             await SendAsync(new WireMessage(WireKind.Wake, text: greeting)).ConfigureAwait(false);
                         }
                         // Dispatch a complete same-utterance command before
@@ -162,16 +173,30 @@ internal sealed class SpeechHost : IDisposable
                         // must never prevent an already parsed game action.
                         foreach (VoiceEvent voiceEvent in voiceEvents.Where(item => item.Kind == VoiceEventKind.Command))
                             await DispatchAsync(voiceEvent.Command).ConfigureAwait(false);
-                        string? prompt = null;
                         foreach (VoiceEvent voiceEvent in voiceEvents.Where(item => item.Kind == VoiceEventKind.Prompt))
                         {
-                            prompt = voiceEvent.Text;
-                            await StatusAsync(prompt).ConfigureAwait(false);
+                            await StatusAsync(voiceEvent.Text).ConfigureAwait(false);
                         }
-                        // One speech operation prevents briefly claiming to be
-                        // listening between a greeting and its argument prompt.
-                        string response = string.Join(" ", new[] { greeting, prompt }.Where(text => !string.IsNullOrWhiteSpace(text)));
-                        if (response.Length > 0) await SpeakAsync(response).ConfigureAwait(false);
+                        // Argument/retry hints stay on screen. Speaking them
+                        // cancels microphone capture just as the user answers.
+                        // Only a wake greeting and completed action use TTS.
+                        if (voiceEvents.Count > 0) greeting ??= _unspokenGreeting;
+                        string response = greeting ?? "";
+                        if (response.Length > 0)
+                        {
+                            if (voiceEvents.Any(value => value.Kind == VoiceEventKind.Command))
+                            {
+                                _unspokenGreeting = null;
+                                await SpeakAsync(response).ConfigureAwait(false);
+                            }
+                            else
+                                _ = DeferResponseAsync(response, _responseVersion, _session.PendingKind);
+                        }
+                        break;
+                    case ResponseDue due when IsCurrentResponse(due):
+                        _responseVersion++;
+                        _unspokenGreeting = null;
+                        await SpeakAsync(due.Text).ConfigureAwait(false);
                         break;
                     case FromParent { Message.Kind: WireKind.Result } reply when _pending.Remove(reply.Message.Id):
                         Console.WriteLine(reply.Message.Text);
@@ -250,6 +275,7 @@ internal sealed class SpeechHost : IDisposable
             try
             {
                 _speaker = new SpeechSynthesizer();
+                _speaker.Rate = 2;
                 _speaker.SetOutputToDefaultAudioDevice();
             }
             catch (Exception error) when (error is InvalidOperationException or System.Runtime.InteropServices.COMException)
@@ -276,7 +302,15 @@ internal sealed class SpeechHost : IDisposable
         if (_disposed || _paused || _stop.IsCancellationRequested) return;
         long timestamp = _clock.ElapsedTicks;
         if (timestamp < Interlocked.Read(ref _acceptAfter)) return;
-        _events.Writer.TryWrite(new Heard(args.Result.Text, args.Result.Confidence, timestamp));
+        var candidates = new List<RecognitionCandidate> { new(args.Result.Text, args.Result.Confidence) };
+        try
+        {
+            foreach (RecognizedPhrase alternate in args.Result.Alternates.Take(5))
+                if (!candidates.Any(value => string.Equals(value.Text, alternate.Text, StringComparison.OrdinalIgnoreCase)))
+                    candidates.Add(new RecognitionCandidate(alternate.Text, alternate.Confidence));
+        }
+        catch (Exception error) when (error is InvalidOperationException or System.Runtime.InteropServices.COMException) { }
+        _events.Writer.TryWrite(new Heard(args.Result.Text, args.Result.Confidence, timestamp, args.Result.Grammar?.Name ?? "unknown", candidates.Take(5).ToArray()));
     }
 
     private void OnSpeechRejected(object? sender, SpeechRecognitionRejectedEventArgs args)
@@ -331,6 +365,22 @@ internal sealed class SpeechHost : IDisposable
         await SendAsync(new WireMessage(WireKind.Command, id, command: command)).ConfigureAwait(false);
     }
 
+    private async Task DeferResponseAsync(string text, int version, CommandKind? pending)
+    {
+        try
+        {
+            // A short gap after "join code" can belong to the same spoken
+            // command. Keep recording briefly instead of immediately speaking
+            // over (and cancelling recognition of) the user's room code.
+            await Task.Delay(300, _stop.Token).ConfigureAwait(false);
+            await _events.Writer.WriteAsync(new ResponseDue(text, version, pending), _stop.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
+    }
+
+    private bool IsCurrentResponse(ResponseDue response) => response.Version == _responseVersion &&
+        response.Pending == _session.PendingKind && _session.IsAwaitingCommand(SessionNow);
+
     private Task ListeningAsync(bool includeStandby = false)
     {
         if (_paused || _disposed || _stop.IsCancellationRequested) return Task.CompletedTask;
@@ -338,11 +388,11 @@ internal sealed class SpeechHost : IDisposable
         if (!active && !includeStandby) return Task.CompletedTask;
         string text = !active ? "Listening for 'hey jace'." : _session.PendingKind switch
         {
-            CommandKind.SetColor => "Listening for three Gorilla Tag color digits, red then green then blue. Say: nine zero five.",
-            CommandKind.EquipOutfit => "Listening for the saved outfit number. Say: one, two, or three.",
-            CommandKind.Equip or CommandKind.Unequip => "Listening for the cosmetic's actual wardrobe name.",
-            CommandKind.JoinRoom => "Listening for the room code. You can spell its letters.",
-            CommandKind.SetTime => "Listening for a time, such as morning, night, or normal.",
+            CommandKind.SetColor => "Listening for three color digits.",
+            CommandKind.EquipOutfit => "Listening for the outfit number.",
+            CommandKind.Equip or CommandKind.Unequip => "Listening for the cosmetic name.",
+            CommandKind.JoinRoom => "Listening for the room code.",
+            CommandKind.SetTime => "Listening for the time.",
             _ => "Listening for your command."
         };
         return StatusAsync(text);

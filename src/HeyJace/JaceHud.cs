@@ -96,13 +96,14 @@ internal sealed class JaceHud : IDisposable
         float halfHeight = Mathf.Tan(Mathf.Clamp(camera.fieldOfView, 55, 115) * Mathf.Deg2Rad * .5f) * distance;
         float aspect = camera.stereoEnabled ? 1 : Mathf.Clamp(camera.aspect, .75f, 1.8f);
         float halfWidth = halfHeight * aspect;
-        // About 6% from the left and 74% down the view, like an in-game chat line.
-        root.transform.SetPositionAndRotation(camera.transform.TransformPoint(new Vector3(-.88f * halfWidth, -.48f * halfHeight, distance)), camera.transform.rotation);
+        // Inset to 26% across the view so the line remains inside the shared
+        // visible area of both headset eyes instead of clipping at the left.
+        root.transform.SetPositionAndRotation(camera.transform.TransformPoint(new Vector3(-.48f * halfWidth, -.48f * halfHeight, distance)), camera.transform.rotation);
         root.transform.localScale = Vector3.one * halfHeight;
 
         if (textDirty)
         {
-            string plain = Wrap("[Jace] " + message, 70, out lineCount);
+            string plain = Wrap("[Jace] " + message, 52, out lineCount);
             font?.RequestCharactersInTexture(plain, 64, FontStyle.Bold);
             foreground.text = "<color=#6BE8FF>[Jace]</color>" + plain.Substring(6);
             shadow.text = plain;
@@ -120,7 +121,7 @@ internal sealed class JaceHud : IDisposable
             Bounds bounds = foreground.GetComponent<Renderer>().localBounds;
             if (bounds.size.x > .001f && bounds.size.y > .001f)
             {
-                float scale = Mathf.Min(1.72f * aspect / bounds.size.x, .032f * lineCount / bounds.size.y);
+                float scale = Mathf.Min(1.30f * aspect / bounds.size.x, .032f * lineCount / bounds.size.y);
                 foreground.transform.localScale = shadow.transform.localScale = Vector3.one * scale;
             }
         }

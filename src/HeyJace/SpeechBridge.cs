@@ -92,7 +92,7 @@ internal sealed class SpeechBridge : IDisposable
                 if (!authenticated)
                 {
                     if (message.Kind != WireKind.Hello || message.Text != PipeProtocol.Handshake)
-                        throw new InvalidDataException("Unexpected speech helper protocol. Replace the whole HeyJace folder so both DLLs and Speech/HeyJace.Speech.exe are version 1.1.0.");
+                        throw new InvalidDataException("Unexpected speech helper protocol. Replace the whole HeyJace folder so both DLLs and Speech/HeyJace.Speech.exe are version 1.2.0.");
                     authenticated = true;
                     continue;
                 }

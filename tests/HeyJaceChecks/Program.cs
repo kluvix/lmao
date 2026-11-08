@@ -27,6 +27,13 @@ ExpectCommand("hey jace join code a bee see one two three", CommandKind.JoinRoom
 ExpectCommand("hey jace join code alpha", CommandKind.JoinRoom, "A");
 ExpectCommand("hey jace join code 00abc012", CommandKind.JoinRoom, "00ABC012");
 ExpectCommand("hey jace join code double you x ray zed", CommandKind.JoinRoom, "WXZ");
+foreach (string code in new[] { "jace34", "jace 34", "jace 3 four", "jace three four", "jace thirty four", "jace thirty-four" })
+    ExpectCommand("hey jace join code " + code, CommandKind.JoinRoom, "JACE34");
+ExpectCommand("hey jace please join code jace 34", CommandKind.JoinRoom, "JACE34");
+ExpectCommand("hey jace can you join code jace thirty four", CommandKind.JoinRoom, "JACE34");
+ExpectCommand("hey jace join code FOR", CommandKind.JoinRoom, "FOR");
+ExpectCommand("hey jace join code for 34", CommandKind.JoinRoom, "FOR34");
+ExpectCommand("hey jace join code to 34", CommandKind.JoinRoom, "TO34");
 ExpectCommand("hey jace change my color to 905", CommandKind.SetColor, "905");
 ExpectCommand("hey jace change my color to nine zero five", CommandKind.SetColor, "905");
 ExpectCommand("hey jace change my colour to nine oh five", CommandKind.SetColor, "905");
@@ -34,6 +41,13 @@ ExpectCommand("hey jace set color 123", CommandKind.SetColor, "123");
 ExpectCommand("hey jace set color to 009", CommandKind.SetColor, "009");
 ExpectCommand("hey jace change color 123", CommandKind.SetColor, "123");
 ExpectCommand("hey jace change color to 009", CommandKind.SetColor, "009");
+ExpectCommand("hey jace change my color to to for oh", CommandKind.SetColor, "240");
+ExpectCommand("hey jace change my color to nine hundred five", CommandKind.SetColor, "905");
+ExpectCommand("hey jace change my color to nine hundred and five", CommandKind.SetColor, "905");
+ExpectCommand("hey jace change my color two four zero", CommandKind.SetColor, "240");
+ExpectCommand("hey jace set my color two four zero", CommandKind.SetColor, "240");
+ExpectCommand("hey jace change my color two nine zero five", CommandKind.SetColor, "905");
+ExpectCommand("hey jace please change my color to too for zero", CommandKind.SetColor, "240");
 ExpectCommand("hey jace change the time to midnight", CommandKind.SetTime, "midnight");
 ExpectCommand("hey jace change the time to 007", CommandKind.SetTime, "7");
 ExpectCommand("hey jace change the time to five", CommandKind.SetTime, "5");
@@ -56,6 +70,7 @@ ExpectCommand("hey jace remove Top Hat", CommandKind.Unequip, "Top Hat");
 ExpectCommand("hey jace equip Jace’s Shirt", CommandKind.Equip, "Jace's Shirt");
 ExpectCommand("hey jace equip Red–White T-Shirt", CommandKind.Equip, "Red-White T-Shirt");
 ExpectCommand("hey jace equip Mr. Fluffy (Red)", CommandKind.Equip, "Mr. Fluffy (Red)");
+ExpectCommand("hey jace equip For Fun Hat", CommandKind.Equip, "For Fun Hat");
 ExpectCommand("hey jace equip outfit one", CommandKind.EquipOutfit, "1");
 ExpectCommand("hey jace equip outfit number 003", CommandKind.EquipOutfit, "3");
 ExpectCommand("hey jace wear outfit 2", CommandKind.EquipOutfit, "2");
@@ -64,6 +79,9 @@ ExpectCommand("hey jace equip outfit nineteen", CommandKind.EquipOutfit, "19");
 ExpectCommand("hey jace equip outfit twenty one", CommandKind.EquipOutfit, "21");
 ExpectCommand("hey jace equip outfit ninety-nine", CommandKind.EquipOutfit, "99");
 ExpectCommand("hey jace equip outfit 999", CommandKind.EquipOutfit, "999");
+ExpectCommand("hey jace equip outfit too", CommandKind.EquipOutfit, "2");
+ExpectCommand("hey jace equip outfit for", CommandKind.EquipOutfit, "4");
+ExpectCommand("hey jace can you equip outfit number too", CommandKind.EquipOutfit, "2");
 Check((int)CommandKind.EquipOutfit == 5 && (int)CommandKind.Unequip == 4, "appended outfit preserves existing wire command values");
 Check((int)WireKind.Vocabulary == 6 && (int)WireKind.Quit == 5, "appended vocabulary preserves existing wire frame values");
 
@@ -75,17 +93,57 @@ Check(session.Process("hey jace", 1, 3).Select(e => e.Kind).SequenceEqual(new[] 
 Check(Command(session.Process("join code BANANA", 1, 4))?.Command?.Argument == "BANANA", "next utterance command");
 Check(session.Process("join code OTHER", 1, 5).Count == 0, "successful command consumes arm");
 
+session = new VoiceSession();
+session.Process("hey jace", 1, 0);
+var unknown = session.Process("do anything", 1, 1);
+Check(Command(unknown) == null && unknown.SingleOrDefault()?.Text == "Say that again.", "unknown command uses short retry rather than long try-menu");
+Check(session.IsAwaitingCommand(2) && session.PendingKind == null, "unknown command preserves trusted command window");
+Check(Command(session.Process("join code jace thirty four", .5f, 2))?.Command is { Kind: CommandKind.JoinRoom, Argument: "JACE34" }, "retry after unknown command succeeds without another wake");
+Check(session.Process("join code OTHER", 1, 3).Count == 0, "retry success still consumes one-command authorization");
+foreach (string ambient in new[] { "please join code jace 34", "can you equip outfit too", "change my color to to for oh" })
+    Check(new VoiceSession().Process(ambient, 1, 0).Count == 0, "polite and numeric forms never authorize ambient speech: " + ambient);
+
+session = new VoiceSession();
+var previewWake = session.Preview("hey jace join code", 1, 0);
+Check(previewWake.Any(e => e.Kind == VoiceEventKind.Wake) && session.PendingKind == null && !session.IsAwaitingCommand(0), "candidate preview cannot arm the live session");
+session.Process("hey jace", 1, 0);
+Check(Command(session.Preview("join code jace 34", .5f, 1))?.Command?.Argument == "JACE34" && session.IsAwaitingCommand(1), "candidate preview returns parsed room without consuming live authorization");
+Check(Command(session.Process("join code jace 34", .5f, 1))?.Command?.Argument == "JACE34", "actual processing after candidate preview still executes");
+session.Process("hey jace change my color to", 1, 2);
+Check(Command(session.Preview("nine zero five", .5f, 3))?.Command is { Kind: CommandKind.SetColor, Argument: "905" } && session.PendingKind == CommandKind.SetColor, "candidate preview cannot consume the pending numeric answer");
+Check(Command(session.Process("nine zero five", .5f, 3))?.Command?.Argument == "905", "pending numeric answer remains usable after preview");
+session.Process("hey jace join code", 1, 4);
+Check(session.Preview("BANANA", 1, double.NaN).Count == 0 && session.PendingKind == CommandKind.JoinRoom && session.IsAwaitingCommand(5), "invalid preview clock cannot reset live pending state");
+Check(Command(session.Process("BANANA", 1, 5))?.Command?.Argument == "BANANA", "live room answer survives rejected candidate preview");
+session.Process("hey jace", 1, 6);
+session.Preview("do anything", 1, 15);
+Check(!session.IsAwaitingCommand(16.001), "unknown preview cannot extend live command expiry");
+
 foreach (var pending in new[]
 {
     ("join code", "b a n a n a", CommandKind.JoinRoom, "BANANA"),
+    ("join code", "jace thirty four", CommandKind.JoinRoom, "JACE34"),
+    ("join code", "join code jace thirty four", CommandKind.JoinRoom, "JACE34"),
     ("change my color to", "nine zero five", CommandKind.SetColor, "905"),
+    ("change my color to red", "change my color to nine zero five", CommandKind.SetColor, "905"),
     ("change the time to", "night", CommandKind.SetTime, "night"),
     ("set time", "night", CommandKind.SetTime, "night"),
     ("change the time to", "six p m", CommandKind.SetTime, "6pm"),
     ("equip", "Top Hat", CommandKind.Equip, "Top Hat"),
+    ("equip", "Please Hat", CommandKind.Equip, "Please Hat"),
+    ("equip", "Wear Hat", CommandKind.Equip, "Wear Hat"),
+    ("equip", "Please Wear Hat", CommandKind.Equip, "Please Wear Hat"),
+    ("unequip", "Wear Hat", CommandKind.Unequip, "Wear Hat"),
+    ("unequip", "Please Wear Hat", CommandKind.Unequip, "Please Wear Hat"),
     ("unequip", "Top Hat", CommandKind.Unequip, "Top Hat"),
     ("equip outfit", "two", CommandKind.EquipOutfit, "2"),
-    ("equip outfit number", "number three", CommandKind.EquipOutfit, "3")
+    ("equip outfit", "equip outfit two", CommandKind.EquipOutfit, "2"),
+    ("equip outfit number", "number three", CommandKind.EquipOutfit, "3"),
+    ("equip outfit", "too", CommandKind.EquipOutfit, "2"),
+    ("change my color to", "to for oh", CommandKind.SetColor, "240"),
+    ("change my color to", "change my color two four zero", CommandKind.SetColor, "240"),
+    ("set my color to", "set my color two four zero", CommandKind.SetColor, "240"),
+    ("change my color to", "change my color two nine zero five", CommandKind.SetColor, "905")
 })
 {
     session = new VoiceSession();
@@ -167,7 +225,8 @@ Check(session.Process("BANANA", 1, 5).Count == 0, "reset clears intent");
 
 foreach (string invalid in new[]
 {
-    "do anything", "join code two unknown", "join code ABCDEFGHIJK", "join code ABC/DEF", "join code ABC;DEF",
+    "join code two unknown", "join code ABCDEFGHIJK", "join code ABC/DEF", "join code ABC;DEF",
+    "join code jace thirty four and join code XX", "join code jace 34 equip Hat", "join code room with words",
     "equip outfit zero", "equip outfit -1", "equip outfit 1000", "equip outfit first twenty", "equip outfit 2 and join code ROOM",
     "change my color to red", "change my color to #a0B1c2", "change my color to ten zero five", "change my color to red and equip Hat", "change the time to tomorrow",
     "change the time to -1", "change the time to 256", "equip ../Hat", "equip Hat; join code ROOM", "unequip " + new string('A', 65),
@@ -178,13 +237,17 @@ foreach (string invalid in new[]
     session = new VoiceSession();
     var events = session.Process("hey jace " + invalid, 1, 0);
     Check(Command(events) == null && events.Any(e => e.Kind == VoiceEventKind.Prompt && e.Text.Length > 0), "invalid command prompts: " + invalid);
-    // A rejected argument may leave its same command pending, but may never
-    // authorize a different operation such as joining a room.
-    Check(Command(session.Process("join code BANANA", 1, 1))?.Command?.Kind != CommandKind.JoinRoom, "invalid argument never authorizes unrelated room command: " + invalid);
+    // Repeating the full pending operation is allowed. A rejected color,
+    // outfit, time, or cosmetic argument must never switch to joining a room.
+    JaceCommand? retry = Command(session.Process("join code BANANA", 1, 1))?.Command;
+    if (invalid.StartsWith("join code ", StringComparison.Ordinal))
+        Check(retry is { Kind: CommandKind.JoinRoom, Argument: "BANANA" }, "invalid room argument can retry the full same operation: " + invalid);
+    else
+        Check(retry?.Kind != CommandKind.JoinRoom, "invalid argument never authorizes unrelated room command: " + invalid);
 }
 session = new VoiceSession();
 var badColor = session.Process("hey jace change my color to red", 1, 0);
-Check(Command(badColor) == null && badColor.Any(e => e.Kind == VoiceEventKind.Prompt && e.Text.Contains("three Gorilla Tag color numbers")), "named color requests numeric correction");
+Check(Command(badColor) == null && badColor.Any(e => e.Kind == VoiceEventKind.Prompt && e.Text.Length is > 0 and <= 120), "named color requests a concise numeric correction");
 Check(session.PendingKind == CommandKind.SetColor && session.IsAwaitingCommand(1), "invalid same-utterance color preserves intended operation");
 Check(Command(session.Process("nine zero five", .5f, 1))?.Command?.Argument == "905", "numeric correction works without another wake");
 session.Process("hey jace equip outfit", 1, 2);
