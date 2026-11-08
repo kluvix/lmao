@@ -7,6 +7,7 @@ namespace HeyJace.Core;
 /// <summary>One UTF-8 line: kind, request id, success, base64 text, command kind or '-', base64 argument.</summary>
 public static class PipeProtocol
 {
+    public const string Handshake = "HeyJace/1.1";
     public const int MaxLineLength = 4096;
     private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
 

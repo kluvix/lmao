@@ -1,6 +1,6 @@
 namespace HeyJace.Core;
 
-public enum CommandKind { JoinRoom, SetColor, SetTime, Equip, Unequip }
+public enum CommandKind { JoinRoom, SetColor, SetTime, Equip, Unequip, EquipOutfit }
 
 public sealed class JaceCommand
 {
@@ -27,7 +27,7 @@ public sealed class VoiceEvent
     { Kind = kind; Text = text; Command = command; }
 }
 
-public enum WireKind { Hello, Wake, Command, Result, Status, Quit }
+public enum WireKind { Hello, Wake, Command, Result, Status, Quit, Vocabulary }
 
 public sealed class WireMessage
 {

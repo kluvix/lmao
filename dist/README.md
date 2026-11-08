@@ -1,6 +1,6 @@
 # Built mod DLLs
 
-`HeyJace-1.0.0-Windows-x64.zip` is the complete offline Windows voice-assistant package. Install its whole `BepInEx/plugins/HeyJace` folder, including `Speech/HeyJace.Speech.exe`. The self-contained helper needs no .NET installation. See [Hey Jace commands and setup](../docs/HEY_JACE.md). Release builds and 777 parser/protocol checks plus 12 live pipe assertions passed; Windows speech, headset UI and actual game actions still need an in-game test.
+`HeyJace-1.1.0-Windows-x64.zip` is the updated offline Windows voice-assistant package: bottom-left in-game VR popup (no separate desktop overlay), numeric Gorilla Tag RGB colors, actual owned cosmetic names, numbered saved outfits, and more reliable command handling. Replace the whole old `BepInEx/plugins/HeyJace` folder, including `Speech/HeyJace.Speech.exe`. The self-contained helper needs no .NET installation. See [Hey Jace commands and setup](../docs/HEY_JACE.md). Parser, live pipe, and fake game API checks cover the update; Windows speech, headset UI and actual game actions still need an in-game test.
 
 `PiglessBunny.dll` is the standalone local bunny companion, version 1.0.0. It uses an original low-poly, pixel-textured model with grip pickup and shoulder perching. Its Release build and 36 behavior cases (154 assertions) passed, and player/controller APIs were inspected against the supplied game metadata. Rendering and VR interaction still need an in-game check. See [Pigless Bunny instructions](../docs/PIGLESS_BUNNY.md).
 

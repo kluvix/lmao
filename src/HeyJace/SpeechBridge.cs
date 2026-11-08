@@ -23,8 +23,9 @@ internal sealed class SpeechBridge : IDisposable
     private StreamWriter? writer;
     private Process? helper;
     private volatile bool disposed;
+    private volatile bool authenticated;
 
-    internal bool Connected => !disposed && pipe?.IsConnected == true && writer != null;
+    internal bool Connected => !disposed && authenticated && pipe?.IsConnected == true && writer != null;
     internal bool Running
     {
         get { try { return !disposed && helper != null && !helper.HasExited; } catch { return false; } }
@@ -33,11 +34,11 @@ internal sealed class SpeechBridge : IDisposable
     internal void Start()
     {
         if (Environment.OSVersion.Platform != PlatformID.Win32NT)
-        { Notice("Hey Jace speech requires Windows. The game can remain minimized while listening."); return; }
+        { Notice("Hey Jace speech requires Windows. The game can remain minimized while listening.", false); return; }
         string directory = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? "";
         string executable = Path.Combine(directory, "Speech", "HeyJace.Speech.exe");
         if (!File.Exists(executable))
-        { Notice("Speech helper missing. Install the complete HeyJace Windows package, including its Speech folder."); return; }
+        { Notice("Speech helper missing. Install the complete HeyJace Windows package, including its Speech folder.", false); return; }
         string name = "HeyJace_" + Guid.NewGuid().ToString("N");
         try
         {
@@ -54,14 +55,14 @@ internal sealed class SpeechBridge : IDisposable
                 },
                 EnableRaisingEvents = true
             };
-            helper.ErrorDataReceived += (_, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) Notice(e.Data!); };
-            helper.Exited += (_, _) => { if (!disposed) Notice("Speech helper stopped. Check Windows speech and microphone settings, then press F10 to restart listening."); };
+            helper.ErrorDataReceived += (_, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) Notice(e.Data!, false); };
+            helper.Exited += (_, _) => { if (!disposed) Notice("Speech helper stopped. Press F10 to restart listening.", false); };
             if (!helper.Start()) throw new InvalidOperationException("Speech helper did not start.");
             helper.BeginErrorReadLine();
             ConnectPipe(name);
             Notice("Starting offline speech. Use the Windows default microphone.");
         }
-        catch (Exception e) { Notice("Could not start speech: " + e.GetBaseException().Message); }
+        catch (Exception e) { Notice("Could not start speech: " + e.GetBaseException().Message, false); }
     }
 
     internal void ConnectPipe(string name)
@@ -83,7 +84,6 @@ internal sealed class SpeechBridge : IDisposable
             writer = output;
             _ = Task.Run(() => WriteLoop(output));
             using var reader = new StreamReader(connection, new UTF8Encoding(false, true), false, 1024, true);
-            bool authenticated = false;
             while (!disposed && connection.IsConnected)
             {
                 string? line = ReadBoundedLine(reader);
@@ -91,8 +91,8 @@ internal sealed class SpeechBridge : IDisposable
                 if (!PipeProtocol.TryDecode(line, out WireMessage? message) || message == null) continue;
                 if (!authenticated)
                 {
-                    if (message.Kind != WireKind.Hello || message.Text != "HeyJace/1")
-                        throw new InvalidDataException("Unexpected speech helper protocol.");
+                    if (message.Kind != WireKind.Hello || message.Text != PipeProtocol.Handshake)
+                        throw new InvalidDataException("Unexpected speech helper protocol. Replace the whole HeyJace folder so both DLLs and Speech/HeyJace.Speech.exe are version 1.1.0.");
                     authenticated = true;
                     continue;
                 }
@@ -101,11 +101,12 @@ internal sealed class SpeechBridge : IDisposable
                     if (incoming.Count < 64) incoming.Enqueue(message);
                 }
             }
-            if (!disposed) Notice("Speech connection closed. F10 restarts the assistant.");
+            if (!disposed) Notice("Speech connection closed. F10 restarts the assistant.", false);
         }
-        catch (Exception e) { if (!disposed) Notice("Speech connection: " + e.GetBaseException().Message); }
+        catch (Exception e) { if (!disposed) Notice("Speech connection: " + e.GetBaseException().Message, false); }
         finally
         {
+            authenticated = false;
             stop.Cancel();
             try { pipe?.Dispose(); } catch { }
             writer = null;
@@ -124,7 +125,7 @@ internal sealed class SpeechBridge : IDisposable
             }
         }
         catch (OperationCanceledException) { }
-        catch (Exception e) { if (!disposed) Notice("Speech reply connection: " + e.GetBaseException().Message); }
+        catch (Exception e) { if (!disposed) Notice("Speech reply connection: " + e.GetBaseException().Message, false); }
         finally { try { output.Dispose(); } catch { } }
     }
 
@@ -153,19 +154,30 @@ internal sealed class SpeechBridge : IDisposable
                 if (clean.Length >= 500) break;
                 clean.Append(char.IsControl(c) || c == '\u2028' || c == '\u2029' ? ' ' : c);
             }
-            if (disposed || pipe?.IsConnected != true || writer == null) return;
-            if (outgoing.Count >= 32) { Notice("Speech reply queue is full. F10 restarts the assistant."); return; }
+            if (!Connected) return;
+            if (outgoing.Count >= 32) { Notice("Speech reply queue is full. F10 restarts the assistant.", false); return; }
             outgoing.Enqueue(new WireMessage(WireKind.Result, id, result.Success, clean.ToString()));
             repliesReady.Release();
         }
-        catch (Exception e) { if (!disposed) Notice("Speech reply: " + e.GetBaseException().Message); }
+        catch (Exception e) { if (!disposed) Notice("Speech reply: " + e.GetBaseException().Message, false); }
     }
 
-    private void Notice(string text)
+    internal bool TrySendVocabulary(int phase, string text)
+    {
+        if (!Connected || outgoing.Count >= 24) return false;
+        var message = new WireMessage(WireKind.Vocabulary, phase, text: text);
+        // Validate synchronously so malformed names can never kill the writer.
+        PipeProtocol.Encode(message);
+        outgoing.Enqueue(message);
+        repliesReady.Release();
+        return true;
+    }
+
+    private void Notice(string text, bool success = true)
     {
         if (disposed || incoming.Count >= 64) return;
         if (text.Length > 500) text = text.Substring(0, 500);
-        incoming.Enqueue(new WireMessage(WireKind.Status, text: text));
+        incoming.Enqueue(new WireMessage(WireKind.Status, success: success, text: text));
     }
 
     public void Dispose()

@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>Assembly-CSharp</AssemblyName>
+    <Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/HeyJace.Core/HeyJace.Core.csproj" />
+    <Compile Include="../../src/HeyJace/GameActions.cs" Link="GameActions.cs" />
+  </ItemGroup>
+</Project>

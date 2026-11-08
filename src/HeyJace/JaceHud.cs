@@ -6,39 +6,71 @@ using UnityEngine.Rendering;
 
 namespace HeyJace;
 
+// A small chat notification rendered in the local headset view. The game's
+// desktop mirror can include it; this creates no desktop window or GUI overlay.
 internal sealed class JaceHud : IDisposable
 {
-    private string title = "HEY JACE", message = "", lastText = "";
-    private float until;
+    private string message = "";
+    private float shownAt, until, nextCameraCheck, nextTextAttempt;
+    private bool hasMessage, persistent, textDirty = true;
+    private int fitFrames, lineCount = 1;
     private GameObject? root;
-    private Mesh? panelMesh;
-    private Material? panelMaterial, textMaterial;
-    private TextMesh? label;
+    private TextMesh? foreground, shadow;
+    private Material? textMaterial, shadowMaterial;
     private Font? font;
-    private AudioSource? audio;
-    private AudioClip? chime;
     private Camera? camera;
     private MemberInfo? playerInstance, mainCamera;
-    private GUIStyle? headingStyle, bodyStyle;
-    private int fitFrames;
-    private float nextCameraCheck;
-    private float nextPanelAttempt;
+    private AudioSource? audio;
+    private AudioClip? chime;
 
     internal void Show(string heading, string text, float seconds = 6)
     {
-        title = heading;
-        message = text.Length > 180 ? text.Substring(0, 177) + "..." : text;
-        until = Time.unscaledTime + Mathf.Clamp(seconds, 2, 15);
-        lastText = "";
+        persistent = false;
+        ShowCore(text, seconds);
     }
 
-    internal void Wake(bool playSound)
+    internal void ShowPersistent(string heading, string text)
     {
-        Show("JACE • LISTENING", "What's up? Say a command.", 8);
-        if (playSound)
+        persistent = true;
+        ShowCore(text, 15);
+    }
+
+    internal void ClearPersistent()
+    {
+        persistent = false;
+        until = Time.unscaledTime + 6;
+    }
+
+    private void ShowCore(string text, float seconds)
+    {
+        text ??= "";
+        // Incoming text cannot inject TextMesh formatting. Only our cyan tag
+        // below uses rich text; the shadow always receives plain text.
+        text = text.Replace('<', '[').Replace('>', ']').Replace('\r', ' ').Replace('\n', ' ');
+        message = text.Length > 240 ? text.Substring(0, 237) + "..." : text;
+        shownAt = Time.unscaledTime;
+        until = shownAt + Mathf.Clamp(seconds, 2, 30);
+        hasMessage = true;
+        textDirty = true;
+    }
+
+    internal void Wake(bool playSound, string greeting = "What's up?")
+    {
+        Show("JACE", greeting, 10);
+        if (!playSound) return;
+        EnsureSound();
+        audio?.PlayOneShot(chime, .42f);
+    }
+
+    private float Opacity
+    {
+        get
         {
-            EnsureSound();
-            audio?.PlayOneShot(chime, .42f);
+            if (!hasMessage) return 0;
+            float now = Time.unscaledTime;
+            float enter = Mathf.SmoothStep(0, 1, Mathf.Clamp01((now - shownAt) / .12f));
+            float exit = persistent ? 1 : Mathf.SmoothStep(0, 1, Mathf.Clamp01((until - now) / .25f));
+            return enter * exit;
         }
     }
 
@@ -49,51 +81,51 @@ internal sealed class JaceHud : IDisposable
             nextCameraCheck = Time.unscaledTime + 1;
             camera = FindLocalCamera();
         }
-        if (root == null && Time.unscaledTime >= nextPanelAttempt)
+        if (root == null && Time.unscaledTime >= nextTextAttempt)
         {
-            nextPanelAttempt = Time.unscaledTime + 5;
-            try { EnsurePanel(); }
-            catch { ClearPanel(); throw; }
+            nextTextAttempt = Time.unscaledTime + 5;
+            try { EnsureText(); }
+            catch { ClearText(); throw; }
         }
-        bool visible = Time.unscaledTime <= until && camera != null;
+        float opacity = Opacity;
+        bool visible = opacity > .001f && camera != null;
         root?.SetActive(visible);
-        if (!visible || root == null || label == null || camera == null) return;
-        float distance = Mathf.Max(.75f, camera.nearClipPlane * 4);
-        root.transform.SetPositionAndRotation(camera.transform.TransformPoint(new Vector3(-.28f, .19f, 1) * distance), camera.transform.rotation);
-        root.transform.localScale = Vector3.one * distance;
-        string text = title + "\n" + Wrap(message, 40);
-        if (text != lastText)
+        if (!visible || root == null || foreground == null || shadow == null || camera == null) return;
+
+        float distance = Mathf.Max(.85f, camera.nearClipPlane * 4);
+        float halfHeight = Mathf.Tan(Mathf.Clamp(camera.fieldOfView, 55, 115) * Mathf.Deg2Rad * .5f) * distance;
+        float aspect = camera.stereoEnabled ? 1 : Mathf.Clamp(camera.aspect, .75f, 1.8f);
+        float halfWidth = halfHeight * aspect;
+        // About 6% from the left and 74% down the view, like an in-game chat line.
+        root.transform.SetPositionAndRotation(camera.transform.TransformPoint(new Vector3(-.88f * halfWidth, -.48f * halfHeight, distance)), camera.transform.rotation);
+        root.transform.localScale = Vector3.one * halfHeight;
+
+        if (textDirty)
         {
-            font?.RequestCharactersInTexture(text, 64, FontStyle.Normal);
-            label.text = text; lastText = text; fitFrames = 3;
+            string plain = Wrap("[Jace] " + message, 70, out lineCount);
+            font?.RequestCharactersInTexture(plain, 64, FontStyle.Bold);
+            foreground.text = "<color=#6BE8FF>[Jace]</color>" + plain.Substring(6);
+            shadow.text = plain;
+            textDirty = false;
+            fitFrames = 3;
         }
-        if (textMaterial != null && font != null) textMaterial.mainTexture = font.material.mainTexture;
+        if (font != null)
+        {
+            if (textMaterial != null) textMaterial.mainTexture = font.material.mainTexture;
+            if (shadowMaterial != null) shadowMaterial.mainTexture = font.material.mainTexture;
+        }
         if (fitFrames > 0)
         {
             fitFrames--;
-            Bounds bounds = label.GetComponent<Renderer>().localBounds;
+            Bounds bounds = foreground.GetComponent<Renderer>().localBounds;
             if (bounds.size.x > .001f && bounds.size.y > .001f)
-                label.transform.localScale = Vector3.one * Mathf.Min(.34f / bounds.size.x, .078f / bounds.size.y);
+            {
+                float scale = Mathf.Min(1.72f * aspect / bounds.size.x, .032f * lineCount / bounds.size.y);
+                foreground.transform.localScale = shadow.transform.localScale = Vector3.one * scale;
+            }
         }
-    }
-
-    internal void DrawDesktop()
-    {
-        if (Time.unscaledTime > until) return;
-        headingStyle ??= new GUIStyle(GUI.skin.label) { fontSize = 17, fontStyle = FontStyle.Bold, richText = false, normal = { textColor = new Color(.35f, .9f, 1) } };
-        bodyStyle ??= new GUIStyle(GUI.skin.label) { fontSize = 13, wordWrap = true, richText = false, normal = { textColor = Color.white } };
-        Color previous = GUI.color;
-        try
-        {
-            GUI.color = new Color(.025f, .05f, .075f, .94f);
-            GUI.DrawTexture(new Rect(22, 22, 350, 104), Texture2D.whiteTexture);
-            GUI.color = new Color(.2f, .85f, 1);
-            GUI.DrawTexture(new Rect(22, 22, 3, 104), Texture2D.whiteTexture);
-            GUI.color = Color.white;
-            GUI.Label(new Rect(36, 30, 324, 25), title, headingStyle);
-            GUI.Label(new Rect(36, 59, 324, 62), message, bodyStyle);
-        }
-        finally { GUI.color = previous; }
+        foreground.color = new Color(1, 1, 1, opacity);
+        shadow.color = new Color(.015f, .025f, .035f, opacity * .9f);
     }
 
     private Camera? FindLocalCamera()
@@ -102,13 +134,14 @@ internal sealed class JaceHud : IDisposable
         {
             if (playerInstance == null)
             {
-                foreach (Assembly a in AppDomain.CurrentDomain.GetAssemblies())
+                foreach (Assembly assembly in AppDomain.CurrentDomain.GetAssemblies())
                 {
-                    if (a.GetName().Name != "Assembly-CSharp") continue;
-                    Type? t = a.GetType("GorillaLocomotion.GTPlayer");
-                    if (t == null) continue;
-                    playerInstance = (MemberInfo?)t.GetProperty("Instance", BindingFlags.Public | BindingFlags.Static) ?? t.GetField("_instance", BindingFlags.NonPublic | BindingFlags.Static);
-                    mainCamera = t.GetField("mainCamera", BindingFlags.Public | BindingFlags.Instance);
+                    if (assembly.GetName().Name != "Assembly-CSharp") continue;
+                    Type? type = assembly.GetType("GorillaLocomotion.GTPlayer");
+                    if (type == null) continue;
+                    const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.FlattenHierarchy;
+                    playerInstance = (MemberInfo?)type.GetProperty("Instance", flags) ?? type.GetField("_instance", flags);
+                    mainCamera = type.GetField("mainCamera", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
                 }
             }
             object? player = Read(playerInstance, null);
@@ -117,41 +150,41 @@ internal sealed class JaceHud : IDisposable
         catch { return null; }
     }
 
-    private void EnsurePanel()
+    private void EnsureText()
     {
         font = TryFont("LegacyRuntime.ttf") ?? TryFont("Arial.ttf");
         if (font == null) return;
-        Shader? shader = Shader.Find("Unlit/Color") ?? Shader.Find("Universal Render Pipeline/Unlit");
-        if (shader == null) return;
-        root = new GameObject("Hey Jace local popup");
+        root = new GameObject("Hey Jace local chat notification");
         UnityEngine.Object.DontDestroyOnLoad(root);
-        panelMesh = new Mesh { name = "Hey Jace popup panel" };
-        panelMesh.vertices = new[] { new Vector3(-.18f, -.055f, 0), new Vector3(.18f, -.055f, 0), new Vector3(.18f, .055f, 0), new Vector3(-.18f, .055f, 0) };
-        panelMesh.triangles = new[] { 0, 2, 1, 0, 3, 2, 0, 1, 2, 0, 2, 3 };
-        panelMesh.RecalculateNormals(); panelMesh.RecalculateBounds();
-        root.AddComponent<MeshFilter>().sharedMesh = panelMesh;
-        panelMaterial = new Material(shader) { name = "Hey Jace popup background", renderQueue = 4000 };
-        Color color = new(.025f, .05f, .075f, 1);
-        if (panelMaterial.HasProperty("_Color")) panelMaterial.SetColor("_Color", color);
-        if (panelMaterial.HasProperty("_BaseColor")) panelMaterial.SetColor("_BaseColor", color);
-        SetOverlay(panelMaterial);
-        MeshRenderer renderer = root.AddComponent<MeshRenderer>(); renderer.sharedMaterial = panelMaterial;
-        renderer.shadowCastingMode = ShadowCastingMode.Off; renderer.receiveShadows = false;
-        var text = new GameObject("Jace popup text"); text.transform.SetParent(root.transform, false);
-        text.transform.localPosition = new Vector3(-.168f, .043f, -.002f);
-        label = text.AddComponent<TextMesh>(); label.font = font; label.fontSize = 64; label.characterSize = 1;
-        label.color = new Color(.65f, .95f, 1); label.anchor = TextAnchor.UpperLeft; label.alignment = TextAlignment.Left; label.richText = false;
-        text.transform.localScale = Vector3.one * .01f;
-        textMaterial = new Material(font.material) { name = "Hey Jace popup font", renderQueue = 4001 };
-        SetOverlay(textMaterial); text.GetComponent<Renderer>().sharedMaterial = textMaterial;
+        shadowMaterial = new Material(font.material) { name = "Hey Jace chat shadow", renderQueue = 4000 };
+        textMaterial = new Material(font.material) { name = "Hey Jace chat text", renderQueue = 4001 };
+        SetOverlay(shadowMaterial); SetOverlay(textMaterial);
+        shadow = MakeText("Jace text shadow", shadowMaterial, false, new Vector3(.0015f, -.0018f, 0));
+        foreground = MakeText("Jace text", textMaterial, true, new Vector3(0, 0, -.001f));
         root.SetActive(false);
+        textDirty = true;
+    }
+
+    private TextMesh MakeText(string name, Material material, bool richText, Vector3 position)
+    {
+        var child = new GameObject(name);
+        child.transform.SetParent(root!.transform, false);
+        child.transform.localPosition = position;
+        TextMesh label = child.AddComponent<TextMesh>();
+        label.font = font; label.fontSize = 64; label.fontStyle = FontStyle.Bold; label.characterSize = 1;
+        label.anchor = TextAnchor.UpperLeft; label.alignment = TextAlignment.Left;
+        label.richText = richText;
+        MeshRenderer renderer = child.GetComponent<MeshRenderer>();
+        renderer.sharedMaterial = material;
+        renderer.shadowCastingMode = ShadowCastingMode.Off;
+        renderer.receiveShadows = false;
+        child.transform.localScale = Vector3.one * .001f;
+        return label;
     }
 
     private void EnsureSound()
     {
         if (audio != null) return;
-        // A separate persistent audio object lets the activation chime finish
-        // when the visual panel expires or its camera is being initialized.
         var sound = new GameObject("Hey Jace activation sound");
         UnityEngine.Object.DontDestroyOnLoad(sound);
         audio = sound.AddComponent<AudioSource>(); audio.playOnAwake = false; audio.spatialBlend = 0; audio.ignoreListenerPause = true;
@@ -159,27 +192,37 @@ internal sealed class JaceHud : IDisposable
         var samples = new float[length];
         for (int i = 0; i < length; i++)
         {
-            float t = i / (float)rate;
+            float time = i / (float)rate;
             float envelope = Mathf.Sin(Mathf.PI * i / (length - 1));
-            float hz = t < .13f ? 660 : 990;
-            samples[i] = Mathf.Sin(2 * Mathf.PI * hz * t) * envelope * .28f;
+            float frequency = time < .13f ? 660 : 990;
+            samples[i] = Mathf.Sin(2 * Mathf.PI * frequency * time) * envelope * .28f;
         }
-        chime = AudioClip.Create("Jace two note activation", length, 1, rate, false); chime.SetData(samples, 0);
+        chime = AudioClip.Create("Jace two note activation", length, 1, rate, false);
+        chime.SetData(samples, 0);
     }
 
     private static void SetOverlay(Material material)
     {
+        if (material.shader.name == "UI/Default") material.SetInt("unity_GUIZTestMode", (int)CompareFunction.Always);
         if (material.HasProperty("_ZTest")) material.SetInt("_ZTest", (int)CompareFunction.Always);
         if (material.HasProperty("_ZWrite")) material.SetInt("_ZWrite", 0);
     }
+
     private static Font? TryFont(string name) { try { return Resources.GetBuiltinResource<Font>(name); } catch { return null; } }
-    private static object? Read(MemberInfo? member, object? owner) => member switch { FieldInfo f => f.GetValue(owner), PropertyInfo p => p.GetValue(owner, null), _ => null };
-    private static string Wrap(string text, int width)
+    private static object? Read(MemberInfo? member, object? owner) => member switch { FieldInfo field => field.GetValue(owner), PropertyInfo property => property.GetValue(owner, null), _ => null };
+
+    private static string Wrap(string text, int width, out int lines)
     {
-        var result = new StringBuilder(); int column = 0;
-        foreach (string word in text.Split(' '))
+        var result = new StringBuilder();
+        int column = 0;
+        lines = 1;
+        foreach (string word in text.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
         {
-            if (column + word.Length > width) { result.Append('\n'); column = 0; }
+            if (column > 0 && column + word.Length + 1 > width)
+            {
+                if (lines == 3) { result.Append("..."); break; }
+                result.Append('\n'); column = 0; lines++;
+            }
             else if (column > 0) { result.Append(' '); column++; }
             result.Append(word); column += word.Length;
         }
@@ -188,18 +231,18 @@ internal sealed class JaceHud : IDisposable
 
     public void Dispose()
     {
-        ClearPanel();
+        ClearText();
         if (audio != null) UnityEngine.Object.Destroy(audio.gameObject);
         if (chime != null) UnityEngine.Object.Destroy(chime);
         audio = null; chime = null;
     }
 
-    private void ClearPanel()
+    private void ClearText()
     {
         if (root != null) UnityEngine.Object.Destroy(root);
-        if (panelMesh != null) UnityEngine.Object.Destroy(panelMesh);
-        if (panelMaterial != null) UnityEngine.Object.Destroy(panelMaterial);
         if (textMaterial != null) UnityEngine.Object.Destroy(textMaterial);
-        root = null; label = null; panelMesh = null; panelMaterial = textMaterial = null;
+        if (shadowMaterial != null) UnityEngine.Object.Destroy(shadowMaterial);
+        root = null; foreground = shadow = null;
+        textMaterial = shadowMaterial = null;
     }
 }

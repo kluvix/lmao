@@ -36,6 +36,8 @@ dotnet build src/HeyJace/HeyJace.csproj --configuration Release --nologo \
   -p:ToolReferenceDir="$reference_dir" -p:UnityReferenceDir="$unity_dir"
 dotnet run --project tests/HeyJaceChecks --configuration Release
 dotnet run --project tests/HeyJacePipeChecks --configuration Release
+dotnet run --project tests/HeyJaceGameActionsChecks --configuration Release
+dotnet run --project src/HeyJace.Speech/Checks/HeyJace.SpeechChecks.csproj --configuration Release
 dotnet publish src/HeyJace.Speech/HeyJace.Speech.csproj --configuration Release \
   --runtime win-x64 --self-contained true -p:PublishSingleFile=true \
   --output "$repo_dir/artifacts/heyjace-speech" --nologo

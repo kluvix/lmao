@@ -68,6 +68,8 @@ try {
     )
     Invoke-DotNet -Arguments @('run', '--project', 'tests/HeyJaceChecks', '--configuration', 'Release')
     Invoke-DotNet -Arguments @('run', '--project', 'tests/HeyJacePipeChecks', '--configuration', 'Release')
+    Invoke-DotNet -Arguments @('run', '--project', 'tests/HeyJaceGameActionsChecks', '--configuration', 'Release')
+    Invoke-DotNet -Arguments @('run', '--project', 'src/HeyJace.Speech/Checks/HeyJace.SpeechChecks.csproj', '--configuration', 'Release')
     Invoke-DotNet -Arguments @(
         'publish', 'src/HeyJace.Speech/HeyJace.Speech.csproj', '--configuration', 'Release',
         '--runtime', 'win-x64', '--self-contained', 'true', '-p:PublishSingleFile=true',

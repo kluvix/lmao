@@ -18,38 +18,58 @@ async Task<WireMessage> Next(SpeechBridge bridge, WireKind kind)
 
 await using (var session = await Session.Create())
 {
-    await session.Send(new WireMessage(WireKind.Hello, text: "HeyJace/1"));
+    Check(!session.Bridge.Connected, "bridge is not ready before the helper handshake");
+    await session.Send(new WireMessage(WireKind.Hello, text: PipeProtocol.Handshake));
     await session.Writer.WriteLineAsync("malformed line");
     await session.Send(new WireMessage(WireKind.Wake, text: "what's up"));
     await session.Send(new WireMessage(WireKind.Command, 7, command: new JaceCommand(CommandKind.JoinRoom, "BANANA")));
     Check((await Next(session.Bridge, WireKind.Wake)).Text == "what's up", "wake delivery");
     WireMessage command = await Next(session.Bridge, WireKind.Command);
     Check(command.Id == 7 && command.Command?.Argument == "BANANA", "command delivery after malformed line");
+    Check(session.Bridge.Connected, "verified helper handshake marks bridge ready");
     session.Bridge.SendResult(7, new ActionResult(true, "Joining\r\nBANANA"));
     string? reply = await session.Reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(4));
     Check(reply != null && PipeProtocol.TryDecode(reply, out WireMessage? decoded) && decoded != null && decoded.Kind == WireKind.Result && decoded.Id == 7 && decoded.Text == "Joining  BANANA", "sanitized duplex reply");
     session.Bridge.SendResult(8, new ActionResult(false, new string('x', 800)));
     reply = await session.Reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(4));
     Check(reply != null && PipeProtocol.TryDecode(reply, out WireMessage? capped) && capped != null && capped.Text.Length == 500, "bounded result text");
-}
-
-await using (var session = await Session.Create())
-{
-    await session.Send(new WireMessage(WireKind.Command, 1, command: new JaceCommand(CommandKind.SetTime, "night")));
-    Check((await Next(session.Bridge, WireKind.Status)).Text.Contains("Unexpected speech helper protocol"), "requires hello before command");
-    Check(!session.Bridge.TryRead(out WireMessage? extra) || extra?.Kind != WireKind.Command, "unverified command not queued");
+    Check(session.Bridge.TrySendVocabulary(0, "") && session.Bridge.TrySendVocabulary(1, "Top Hat|Bunny Ears") &&
+        session.Bridge.TrySendVocabulary(2, ""), "owned-name vocabulary queued without blocking");
+    for (int phase = 0; phase < 3; phase++)
+    {
+        reply = await session.Reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(4));
+        Check(reply != null && PipeProtocol.TryDecode(reply, out WireMessage? vocabulary) && vocabulary != null &&
+            vocabulary.Kind == WireKind.Vocabulary && vocabulary.Id == phase &&
+            vocabulary.Text == (phase == 1 ? "Top Hat|Bunny Ears" : ""), "vocabulary phase " + phase + " survives actual duplex pipe");
+    }
 }
 
 await using (var session = await Session.Create())
 {
     await session.Send(new WireMessage(WireKind.Hello, text: "HeyJace/1"));
+    WireMessage failure = await Next(session.Bridge, WireKind.Status);
+    Check(!failure.Success && failure.Text.Contains("Replace the whole HeyJace folder"), "mixed old speech helper gets actionable version error");
+    Check(!session.Bridge.Connected, "old helper never becomes ready");
+}
+
+await using (var session = await Session.Create())
+{
+    await session.Send(new WireMessage(WireKind.Command, 1, command: new JaceCommand(CommandKind.SetTime, "night")));
+    WireMessage failure = await Next(session.Bridge, WireKind.Status);
+    Check(!failure.Success && failure.Text.Contains("Unexpected speech helper protocol"), "requires hello before command and preserves error status");
+    Check(!session.Bridge.TryRead(out WireMessage? extra) || extra?.Kind != WireKind.Command, "unverified command not queued");
+}
+
+await using (var session = await Session.Create())
+{
+    await session.Send(new WireMessage(WireKind.Hello, text: PipeProtocol.Handshake));
     await session.Writer.WriteLineAsync(new string('z', PipeProtocol.MaxLineLength + 1));
     Check((await Next(session.Bridge, WireKind.Status)).Text.Contains("too long"), "overlong incoming frame rejected");
 }
 
 await using (var session = await Session.Create())
 {
-    await session.Send(new WireMessage(WireKind.Hello, text: "HeyJace/1"));
+    await session.Send(new WireMessage(WireKind.Hello, text: PipeProtocol.Handshake));
     await session.Writer.WriteAsync(PipeProtocol.Encode(new WireMessage(WireKind.Command, 3, command: new JaceCommand(CommandKind.Equip, "bunny"))));
     await session.Writer.FlushAsync();
     session.Server.Dispose();
@@ -66,7 +86,7 @@ await using (var session = await Session.Create())
 
 await using (var session = await Session.Create())
 {
-    await session.Send(new WireMessage(WireKind.Hello, text: "HeyJace/1"));
+    await session.Send(new WireMessage(WireKind.Hello, text: PipeProtocol.Handshake));
     await session.Send(new WireMessage(WireKind.Wake));
     await Next(session.Bridge, WireKind.Wake);
     // The helper deliberately never reads replies. A full OS pipe must not

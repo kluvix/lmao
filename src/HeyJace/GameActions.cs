@@ -17,7 +17,7 @@ namespace HeyJace;
 internal sealed class GameActions : IDisposable
 {
     private const BindingFlags Instance = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-    private const BindingFlags Static = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+    private const BindingFlags Static = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy;
     private const string PatchId = "heyjace.local-time-player-join";
     private readonly int mainThread = Thread.CurrentThread.ManagedThreadId;
     private Assembly? game;
@@ -47,6 +47,7 @@ internal sealed class GameActions : IDisposable
                 CommandKind.SetTime => SetTime(command.Argument),
                 CommandKind.Equip => ChangeCosmetic(command.Argument, true),
                 CommandKind.Unequip => ChangeCosmetic(command.Argument, false),
+                CommandKind.EquipOutfit => EquipOutfit(command.Argument),
                 _ => Failure("That command is not supported.")
             };
         }
@@ -55,7 +56,7 @@ internal sealed class GameActions : IDisposable
             Exception cause = error.GetBaseException();
             string detail = cause.Message;
             if (detail.Length > 200) detail = detail.Substring(0, 200);
-            return Failure("Game action unavailable: " + detail);
+            return Failure("Could not " + Describe(command.Kind) + ": " + detail);
         }
     }
 
@@ -100,7 +101,7 @@ internal sealed class GameActions : IDisposable
     private ActionResult SetColor(string argument)
     {
         if (!ColorSpec.TryParse(argument, out ColorSpec color))
-            return Failure("Use a named color or three color digits from 0 to 9.");
+            return Failure("Say three Gorilla Tag color numbers from zero to nine, for example nine zero five.");
         Type cosmeticsType = GameType("GorillaNetworking.CosmeticsController");
         object controller = Singleton(cosmeticsType, "instance");
         object tagger = Singleton(GameType("GorillaTagger"), "Instance");
@@ -123,9 +124,8 @@ internal sealed class GameActions : IDisposable
         if (requested.Length == 0) return Failure("Say the cosmetic's wardrobe name.");
         List<object> owned = api.OwnedItems();
         if (owned.Count == 0) return Failure("Your owned wardrobe inventory has not loaded yet.");
-        List<object> matches = MatchCosmetics(api, owned, requested, true);
-        if (matches.Count == 0 && requested.Length >= 3) matches = MatchCosmetics(api, owned, requested, false);
-        if (matches.Count == 0) return Failure("No owned cosmetic matches \"" + argument + "\". Use its wardrobe name.");
+        List<object> matches = MatchCosmetics(api, owned, requested);
+        if (matches.Count == 0) return Failure("No owned cosmetic matches \"" + argument + "\". Say its full actual name.");
         if (matches.Count > 1)
         {
             List<string> names = new List<string>();
@@ -184,19 +184,76 @@ internal sealed class GameActions : IDisposable
             label + (equip ? " is already equipped." : " is already unequipped."));
     }
 
-    private static List<object> MatchCosmetics(CosmeticApi api, List<object> owned, string name, bool exact)
+    private static List<object> MatchCosmetics(CosmeticApi api, List<object> owned, string name)
     {
         List<object> matches = new List<object>();
         HashSet<string> ids = new HashSet<string>(StringComparer.Ordinal);
         foreach (object item in owned)
         {
             string label = Normalize(api.Label(item));
-            // In the inspected version displayName can be a PlayFab ID;
-            // overrideDisplayName is the wardrobe's user-facing name.
-            bool match = exact ? label == name : label.Contains(name);
+            string catalogName = Normalize(api.Display(item));
+            // The actual shop/wardrobe label is overrideDisplayName in the
+            // supplied game. Older catalog items can have a human displayName
+            // too; accept that spelling without requiring an internal item ID.
+            bool match = label == name || catalogName == name;
             if (match && ids.Add(api.Id(item))) matches.Add(item);
         }
         return matches;
+    }
+
+    // Used to teach the offline recognizer the exact names from the user's
+    // loaded, owned wardrobe. Never includes locked/catalog-only cosmetics.
+    internal IReadOnlyList<string> GetOwnedCosmeticNames()
+    {
+        if (!OnMainThread || disposed) return Array.Empty<string>();
+        try
+        {
+            CosmeticApi api = new CosmeticApi(GameType("GorillaNetworking.CosmeticsController"));
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (object item in api.OwnedItems())
+            {
+                string name = api.Label(item).Trim();
+                bool clean = name.Length > 0 && name.Length <= 64;
+                foreach (char character in name)
+                    if (char.IsControl(character) || character == '|' || character == '\u2028' || character == '\u2029') clean = false;
+                if (clean) names.Add(name);
+            }
+            var result = new string[names.Count];
+            names.CopyTo(result);
+            Array.Sort(result, StringComparer.OrdinalIgnoreCase);
+            if (result.Length <= 512) return result;
+            var bounded = new string[512];
+            Array.Copy(result, bounded, bounded.Length);
+            return bounded;
+        }
+        catch { return Array.Empty<string>(); } // Inventory can still be loading.
+    }
+
+    private ActionResult EquipOutfit(string argument)
+    {
+        if (!int.TryParse(argument, NumberStyles.None, CultureInfo.InvariantCulture, out int number) || number < 1)
+            return Failure("Say an outfit number starting at one, for example equip outfit two.");
+        Type type = GameType("GorillaNetworking.CosmeticsController");
+        object controller = Singleton(type, "instance");
+        int maximum = (int)Field(type, "maxOutfits", Static).GetValue(null)!;
+        if (maximum < 1) return Failure("Your saved outfits are still loading. Try again in a moment.");
+        if (number > maximum)
+            return Failure("Your wardrobe has outfits one through " + maximum.ToString(CultureInfo.InvariantCulture) + ".");
+        if (!(bool)Method(type, "CanScrollOutfits", Static).Invoke(null, Array.Empty<object>())!)
+            return Failure("Your outfits are loading or saving. Try again in a moment.");
+        int index = number - 1;
+        PropertyInfo selected = Property(type, "SelectedOutfit", Static);
+        if ((int)selected.GetValue(null)! == index)
+            return Success("Outfit " + number.ToString(CultureInfo.InvariantCulture) + " is already equipped.");
+        Array? saved = Field(type, "savedOutfits", Instance).GetValue(controller) as Array;
+        if (saved == null || index >= saved.Length || saved.GetValue(index) == null)
+            return Failure("That saved outfit is not ready yet.");
+        // The real wardrobe handles ownership, subscriber slot limits, the
+        // previous outfit save, color, prefs and normal cosmetic synchronization.
+        Method(type, "LoadSavedOutfit", Instance, typeof(int)).Invoke(controller, new object[] { index });
+        if ((int)selected.GetValue(null)! != index)
+            return Failure("The wardrobe could not switch outfits. Try again after it finishes saving.");
+        return Success("Equipped outfit " + number.ToString(CultureInfo.InvariantCulture) + ".");
     }
 
     private static bool ContainsItem(CosmeticApi api, Array items, string id)
@@ -413,6 +470,16 @@ internal sealed class GameActions : IDisposable
         foreach (char c in value) if (char.IsLetterOrDigit(c)) result.Append(char.ToLowerInvariant(c));
         return result.ToString();
     }
+    private static string Describe(CommandKind kind) => kind switch
+    {
+        CommandKind.JoinRoom => "join the room",
+        CommandKind.SetColor => "change your color",
+        CommandKind.SetTime => "change local time",
+        CommandKind.Equip => "equip that cosmetic",
+        CommandKind.Unequip => "remove that cosmetic",
+        CommandKind.EquipOutfit => "load that outfit",
+        _ => "run that command"
+    };
     private static ActionResult Success(string message) => new ActionResult(true, message);
     private static ActionResult Failure(string message) => new ActionResult(false, message);
 

@@ -10,8 +10,10 @@ namespace HeyJace.Core;
 public sealed class VoiceSession
 {
     public const float MinimumConfidence = 0.65f;
+    // Short dictated codes and names score lower than the fixed wake grammar.
+    public const float MinimumFollowUpConfidence = 0.4f;
     public const double CommandWindowSeconds = 10;
-    private const string Help = "Try: join code BANANA, change my color to red, change the time to night, equip an item, or unequip an item.";
+    private const string Help = "Try: join code BANANA, change my color to nine zero five, change the time to night, equip a cosmetic name, unequip a cosmetic name, or equip outfit one.";
     private static readonly Regex Wake = new Regex(@"^hey[\s,]+jace(?=$|[\s,.!?:;])", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     private static readonly Regex ClockTime = new Regex(@"^(1[0-2]|0?[1-9]|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)(?::00)?\s*([ap])\.?\s*m\.?$", RegexOptions.CultureInvariant);
     private static readonly string[] TimeNames = { "dawn", "day", "noon", "afternoon", "sunset", "evening", "night", "midnight", "auto" };
@@ -35,6 +37,11 @@ public sealed class VoiceSession
     private double? expiresAt;
     private CommandKind? pending;
 
+    public CommandKind? PendingKind => pending;
+
+    public bool IsAwaitingCommand(double now) => expiresAt.HasValue && !double.IsNaN(now) && !double.IsInfinity(now) &&
+        (!lastTime.HasValue || now >= lastTime.Value) && now <= expiresAt.Value;
+
     public void Reset()
     {
         lastTime = null;
@@ -52,13 +59,16 @@ public sealed class VoiceSession
             return events;
         }
         lastTime = time;
-        if (float.IsNaN(confidence) || float.IsInfinity(confidence) || confidence < MinimumConfidence || confidence > 1 ||
+        if (float.IsNaN(confidence) || float.IsInfinity(confidence) || confidence < 0 || confidence > 1 ||
             utterance == null || utterance.Length > 256 || HasControls(utterance))
         { ClearIntent(); return events; }
         if (expiresAt.HasValue && time > expiresAt.Value) ClearIntent();
 
         string text = Normalize(utterance);
         Match wake = Wake.Match(text);
+        float minimum = wake.Success || !expiresAt.HasValue ? MinimumConfidence : MinimumFollowUpConfidence;
+        // Uncertain background speech must not erase an authorized pending answer.
+        if (confidence < minimum) return events;
         if (wake.Success)
         {
             pending = null;
@@ -87,7 +97,9 @@ public sealed class VoiceSession
             }
             else
             {
-                ClearIntent();
+                // The prompt asks for the same answer again. Preserve the
+                // authorized command and give the reply a fresh full window.
+                expiresAt = time + CommandWindowSeconds;
                 events.Add(new VoiceEvent(VoiceEventKind.Prompt, ArgumentHelp(kind)));
             }
             return events;
@@ -112,7 +124,8 @@ public sealed class VoiceSession
         }
         else
         {
-            ClearIntent();
+            pending = commandKind;
+            expiresAt = time + CommandWindowSeconds;
             events.Add(new VoiceEvent(VoiceEventKind.Prompt, ArgumentHelp(commandKind)));
         }
         return events;
@@ -122,6 +135,14 @@ public sealed class VoiceSession
 
     private static bool TryCommand(string text, out CommandKind kind, out string value)
     {
+        // Outfit is a separate command and must precede the generic "equip".
+        foreach (string prefix in new[] { "equip outfit number", "equip outfit", "put on outfit number", "put on outfit", "wear outfit number", "wear outfit" })
+            if (text.Equals(prefix, StringComparison.OrdinalIgnoreCase) || text.StartsWith(prefix + " ", StringComparison.OrdinalIgnoreCase))
+            {
+                kind = CommandKind.EquipOutfit;
+                value = text.Substring(prefix.Length).Trim();
+                return true;
+            }
         // Longest prefixes go first so the optional words never become part of an argument.
         string[][] prefixes =
         {
@@ -193,12 +214,65 @@ public sealed class VoiceSession
             case CommandKind.Unequip:
                 if (text.Length < 1 || text.Length > 64) return false;
                 foreach (char c in text)
-                    if (!char.IsLetterOrDigit(c) && c != ' ' && c != '-' && c != '_' && c != '\'') return false;
+                    if (!char.IsLetterOrDigit(c) && c != ' ' && c != '-' && c != '_' && c != '\'' && c != '&' && c != '(' && c != ')' && c != '.') return false;
                 if (!ContainsLetterOrDigit(text)) return false;
                 argument = text;
                 return true;
+            case CommandKind.EquipOutfit:
+                return TryOutfitNumber(text, out argument);
             default: return false;
         }
+    }
+
+    private static bool TryOutfitNumber(string text, out string argument)
+    {
+        argument = "";
+        string value = text.ToLowerInvariant().Replace('-', ' ');
+        if (value.StartsWith("number ", StringComparison.Ordinal)) value = value.Substring(7);
+        int number = ColorSpec.Digit(value);
+        if (number < 0)
+        {
+            switch (value)
+            {
+                case "ten": number = 10; break;
+                case "eleven": number = 11; break;
+                case "twelve": number = 12; break;
+                case "thirteen": number = 13; break;
+                case "fourteen": number = 14; break;
+                case "fifteen": number = 15; break;
+                case "sixteen": number = 16; break;
+                case "seventeen": number = 17; break;
+                case "eighteen": number = 18; break;
+                case "nineteen": number = 19; break;
+                default:
+                    if (!int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out number))
+                    {
+                        string[] words = value.Split(' ');
+                        if (words.Length < 1 || words.Length > 2) return false;
+                        int tens;
+                        switch (words[0])
+                        {
+                            case "twenty": tens = 20; break;
+                            case "thirty": tens = 30; break;
+                            case "forty": tens = 40; break;
+                            case "fifty": tens = 50; break;
+                            case "sixty": tens = 60; break;
+                            case "seventy": tens = 70; break;
+                            case "eighty": tens = 80; break;
+                            case "ninety": tens = 90; break;
+                            default: return false;
+                        }
+                        int ones = words.Length == 1 ? 0 : ColorSpec.Digit(words[1]);
+                        if (ones < 0 || (words.Length == 2 && ones == 0)) return false;
+                        number = tens + ones;
+                    }
+                    break;
+            }
+        }
+        // Slots start at one; the game adapter checks the actual saved count.
+        if (number < 1 || number > 999) return false;
+        argument = number.ToString(CultureInfo.InvariantCulture);
+        return true;
     }
 
     private static bool TryRoom(string value, out string argument)
@@ -247,17 +321,18 @@ public sealed class VoiceSession
         return false;
     }
 
-    private static string Normalize(string text) => Regex.Replace(text.Trim(), @"\s+", " ").TrimEnd(' ', '.', '!', '?', ',', ';', ':');
+    private static string Normalize(string text) => Regex.Replace(text.Trim().Replace('\u2019', '\'').Replace('\u2018', '\'').Replace('\u2013', '-').Replace('\u2014', '-'), @"\s+", " ").TrimEnd(' ', '.', '!', '?', ',', ';', ':');
 
     private static string ArgumentHelp(CommandKind kind)
     {
         switch (kind)
         {
             case CommandKind.JoinRoom: return "Say a room code of 1 to 10 letters or digits; you can spell it with NATO words.";
-            case CommandKind.SetColor: return "Say a color name, three digits from zero to nine, or a six-digit hex color.";
+            case CommandKind.SetColor: return "Say the three Gorilla Tag color numbers in red, green, blue order, each from zero to nine. For example: nine zero five.";
             case CommandKind.SetTime: return "Say morning, day, noon, afternoon, sunset, evening, night, midnight, auto, a clock hour such as six AM, or a preset index.";
-            case CommandKind.Equip: return "Say the name of an owned cosmetic to equip.";
-            default: return "Say the name of a cosmetic to unequip.";
+            case CommandKind.Equip: return "Say the actual name of an owned cosmetic to equip.";
+            case CommandKind.Unequip: return "Say the actual name of a cosmetic to unequip.";
+            default: return "Say the saved outfit number, starting at one.";
         }
     }
 }
